@@ -1,5 +1,3 @@
-import asyncio
-
 from igraph.datahub_adapter import DataHubAdapter
 from igraph.engine import ImpactEngine
 from igraph.executor import EnforcementPoint
@@ -26,8 +24,18 @@ def test_high_risk_change_blocks_production():
         source_name="orders",
         schema_fields=["customer_id"],
         downstream=[
-            ImpactNode(urn="urn:li:dashboard:test", name="Revenue", type="dashboard", depth=1),
-            ImpactNode(urn="urn:li:mlFeature:test", name="Churn", type="ml_feature", depth=2),
+            ImpactNode(
+                urn="urn:li:dashboard:test",
+                name="Revenue",
+                type="dashboard",
+                depth=1,
+            ),
+            ImpactNode(
+                urn="urn:li:mlFeature:test",
+                name="Churn",
+                type="ml_feature",
+                depth=2,
+            ),
         ],
     )
     risk = engine.assess_risk(request, context)
@@ -113,7 +121,12 @@ def test_denied_action_never_invokes_executor():
         schema_fields=["customer_id"],
         tags=["pii"],
         downstream=[
-            ImpactNode(urn="urn:li:dashboard:test", name="Revenue", type="dashboard", depth=1)
+            ImpactNode(
+                urn="urn:li:dashboard:test",
+                name="Revenue",
+                type="dashboard",
+                depth=1,
+            )
         ],
     )
     pact = engine.make_pact(request, context, engine.assess_risk(request, context))
