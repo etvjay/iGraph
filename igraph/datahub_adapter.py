@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any
 
-import httpx
 from datahub.metadata.urns import Urn
 from datahub.sdk import DataHubClient
 
@@ -39,7 +37,7 @@ DEMO_DOWNSTREAM = [
 
 
 class DataHubAdapter:
-    """DataHub adapter with live SDK/GraphQL reads and deterministic demo fallback."""
+    """DataHub adapter with live SDK reads/writeback and deterministic demo fallback."""
 
     def __init__(self) -> None:
         self.base_url = os.getenv("DATAHUB_GMS_URL", "").rstrip("/")
@@ -62,16 +60,19 @@ class DataHubAdapter:
                 if result:
                     return result
             except Exception:
-                # The fallback keeps the hackathon demo runnable when a local OSS
-                # instance is unavailable. The response marks live=False so the UI
-                # never misrepresents demo metadata as a live DataHub read.
+                # Demo fallback is explicitly marked live=False, so a connection
+                # problem can never be mistaken for verified DataHub context.
                 pass
         return self._demo_context(entity)
 
     async def _live_context(self, entity: str, field: str | None) -> DataHubContext | None:
         client = self._client()
-        urns = list(client.search.get_urns(query=entity))
-        dataset_urn = next((urn for urn in urns if urn.entity_type == "dataset"), None)
+        if entity.startswith("urn:li:dataset:"):
+            parsed = Urn.from_string(entity)
+            dataset_urn = parsed if parsed.entity_type == "dataset" else None
+        else:
+            urns = list(client.search.get_urns(query=entity))
+            dataset_urn = next((urn for urn in urns if urn.entity_type == "dataset"), None)
         if dataset_urn is None:
             return None
 
@@ -83,7 +84,6 @@ class DataHubAdapter:
             max_hops=3,
             count=500,
         )
-
         downstream = [
             ImpactNode(
                 urn=result.urn,
@@ -94,38 +94,30 @@ class DataHubAdapter:
             for result in lineage
         ]
 
-        owners = []
-        for owner in getattr(dataset, "owners", None) or []:
-            owners.append(str(owner.owner))
-
-        domains = []
+        owners = [str(owner.owner) for owner in (getattr(dataset, "owners", None) or [])]
         domain = getattr(dataset, "domain", None)
-        if domain:
-            domains.append(str(domain))
+        domains = [str(domain)] if domain else []
+        tags = [str(tag.tag).split(":")[-1] for tag in (getattr(dataset, "tags", None) or [])]
 
-        tags = []
-        for tag in getattr(dataset, "tags", None) or []:
-            tags.append(str(tag.tag).split(":")[-1])
-
-        schema_fields = []
+        schema_fields: list[str] = []
         schema = getattr(dataset, "schema", None)
         if schema:
             try:
                 schema_fields = [column.field_path for column in schema]
             except TypeError:
-                schema_fields = []
+                pass
 
-        assertions = []
+        assertions: list[str] = []
         try:
             for assertion in client.assertions.get_assertions_for_entity(dataset_urn):
                 assertions.append(str(getattr(assertion, "urn", assertion)))
         except Exception:
-            # Assertions are enrichment, not a hard dependency for analysis.
             pass
 
+        source_name = getattr(dataset, "display_name", None) or getattr(dataset_urn, "name", None)
         return DataHubContext(
             source_urn=str(dataset_urn),
-            source_name=getattr(dataset, "display_name", None) or dataset_urn.name,
+            source_name=source_name or str(dataset_urn),
             schema_fields=schema_fields,
             owners=owners,
             domains=domains,
@@ -193,7 +185,7 @@ class DataHubAdapter:
         for urn in list(client.search.get_urns(query=query))[:30]:
             if urn.entity_type != "dataset":
                 continue
-            context = await self.get_context(str(urn), None)
+            context = await self.get_context(str(urn))
             if context.live:
                 contexts.append(context)
         return contexts
