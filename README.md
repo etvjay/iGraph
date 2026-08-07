@@ -1,59 +1,200 @@
 # iGraph
 
-**Context-aware change control for autonomous data agents.**
+**Context-derived execution control for autonomous data changes.**
 
-> Before an agent changes your data infrastructure, it should know what it can break.
-
-`iGraph` uses DataHub context to turn a proposed data change into an explicit blast radius, deterministic risk assessment, machine-readable **Impact Pact**, guarded action decisions, validation requirements, and an auditable **Change Receipt**.
+> **iGraph converts live data context into bounded agent authority.**
 
 Built for **Build with DataHub: The Agent Hackathon 2026** — target category: **Agents That Do Real Work**.
 
-## Why
+## The problem
 
-Coding agents increasingly know *how* to alter schemas, dbt models, pipelines and configs. They often do not know the organizational consequences of a technically valid change: which dashboards, ML features, owners, domains, assertions or governed assets depend on it.
+Autonomous coding and data agents increasingly know *how* to alter schemas, transformations, pipelines, and configuration. That does not mean they should automatically receive authority to perform every technically possible action.
 
-DataHub already knows those relationships. iGraph turns that context into an execution boundary.
+The missing question is:
+
+> **Given what this change affects right now, what exactly should this agent be allowed to do?**
+
+DataHub already knows much of the organizational context: schemas, lineage, owners, domains, tags, assertions, dashboards, and downstream dependencies. iGraph compiles that live context into an execution boundary.
 
 ```text
-Proposed change
+Proposed data change
       ↓
 DataHub context
       ↓
-Lineage / impact graph
+Context fingerprint
       ↓
-Deterministic risk classification
+Consequence analysis
       ↓
 Impact Pact
       ↓
-Guarded agent actions
-      ↓
-Validation
-      ↓
-Change Receipt
-      ↓
-DataHub write-back
+Enforcement point
+   ┌──────┴──────┐
+ allowed       denied
+   │              │
+executor       executor never runs
+   └──────┬───────┘
+          ↓
+      validation
+          ↓
+ post-change context
+          ↓
+    Change Receipt
+          ↓
+ DataHub write-back
 ```
+
+## Canonical primitives
+
+### Impact Pact
+
+The **pre-action authority object**. It binds a proposed change to:
+
+- the DataHub context snapshot that justified it;
+- a context fingerprint;
+- deterministic risk;
+- allowed actions;
+- blocked actions;
+- human-approval requirements;
+- required validations.
+
+The Pact is not an AI recommendation. It is consumed by a separate enforcement point.
+
+### Change Receipt
+
+The **post-action evidence object**. It records:
+
+- the Pact and context fingerprint;
+- attempted actions;
+- allow/deny decisions;
+- whether an executor was actually invoked;
+- generated artifacts and SHA-256 hashes;
+- validation evidence;
+- write-back state.
+
+The core invariant is:
+
+> **The agent's capabilities do not determine its authority. The consequences of the action do.**
+
+## Decisive A/B experiment
+
+The repository exposes a deterministic fixture proving the product claim:
+
+```bash
+curl http://localhost:8000/v1/experiments/authority-drift
+```
+
+It keeps the **request, agent capability, and executor unchanged** while changing only the organizational context.
+
+Before:
+
+```text
+orders.customer_id
+→ one ordinary downstream dataset
+→ low risk
+→ deploy_staging ALLOWED
+```
+
+After:
+
+```text
+orders.customer_id
+→ PII classification
+→ executive revenue dashboard
+→ production ML dependency
+→ multiple domains
+→ critical risk
+→ deploy_staging BLOCKED
+```
+
+The same requested change therefore compiles into different authority.
+
+## Enforcement is not decorative
+
+Guarded actions use a separate enforcement point. A denied action returns evidence that:
+
+```text
+executor_invoked = false
+```
+
+so a UI cannot claim an action was blocked after an executor already received it.
+
+The hackathon-safe built-in executor is a reversible `deploy_staging` simulator. Production deployment remains outside the MVP.
 
 ## Current vertical slice
 
-The repository already implements:
+Implemented:
 
-- typed change, context, risk, Pact and receipt models;
-- DataHub GraphQL search + downstream-lineage adapter;
+- typed DataHub context, risk, Pact, execution, receipt, and verification models;
+- DataHub SDK search and multi-hop downstream-lineage integration;
 - deterministic showcase-shaped fallback mode;
-- consequence scoring based on fanout, dashboards, ML dependencies, domains and breaking schema actions;
-- explicit allowlist/blocklist Impact Pacts;
+- context fingerprinting;
+- deterministic consequence scoring;
+- Impact Pact compiler;
 - deny-by-default action guard;
-- an intentionally blocked `deploy_production` demo path for high-risk changes;
-- validation requirements derived from impact context;
-- prepared DataHub write-back payloads;
-- a FastAPI endpoint;
-- a single-screen Change Chamber demo UI;
-- tests for high-risk blocking and deny-by-default behavior.
+- separate execution enforcement point;
+- executor invocation evidence;
+- generated SQL migration and regression-test artifacts with hashes;
+- explicit `pass`, `warning`, `pending`, and `fail` validation states;
+- post-change verification endpoint;
+- opt-in DataHub metadata write-back;
+- golden-demo dataset discovery endpoint;
+- authority-drift experiment;
+- CI with Ruff + pytest.
 
-## Golden demo
+See [`docs/PRODUCT_TRUTH.md`](docs/PRODUCT_TRUTH.md) for protected scope and evidence boundaries.
 
-Propose:
+## Run locally
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+uvicorn igraph.api:app --reload --port 8000
+```
+
+Serve the static UI separately:
+
+```bash
+python -m http.server 3000 --directory web
+```
+
+## DataHub modes
+
+### Demo mode
+
+Leave `DATAHUB_GMS_URL` unset. iGraph uses deterministic metadata and marks it as demo context.
+
+### Live DataHub OSS
+
+```bash
+export DATAHUB_GMS_URL=http://localhost:8080
+export DATAHUB_TOKEN=""
+export IGRAPH_ENABLE_WRITEBACK=false
+```
+
+Load the hackathon datapack:
+
+```bash
+datahub datapack load showcase-ecommerce
+```
+
+Then find a high-consequence demo asset:
+
+```bash
+curl 'http://localhost:8000/v1/discover'
+```
+
+Only after verifying reads should write-back be enabled:
+
+```bash
+export IGRAPH_ENABLE_WRITEBACK=true
+```
+
+## API
+
+### Analyze and compile an Impact Pact
+
+`POST /v1/analyze`
 
 ```json
 {
@@ -64,140 +205,69 @@ Propose:
 }
 ```
 
-iGraph resolves the asset, traverses downstream impact, scores the risk, builds a Pact, allows reviewable artifact generation and blocks an unauthorized production deployment.
+### Enforce an action
 
-The key moment is not that the agent can generate SQL. It is that contextual metadata becomes **machine-enforceable policy**.
+`POST /v1/actions/execute`
 
-## Run locally
+Send the Pact returned by `/v1/analyze`, an action, and its parameters. iGraph re-checks live context before execution; if the context fingerprint has drifted, the stale Pact fails closed and the executor is not invoked.
 
-### 1. Install
+### Verify after change
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[dev]"
-```
+`POST /v1/verify`
 
-### 2. Start the API
+Re-reads DataHub and records the post-change context fingerprint.
 
-```bash
-uvicorn igraph.api:app --reload --port 8000
-```
+### Find the golden demo asset
 
-### 3. Open the UI
+`GET /v1/discover`
 
-Serve the static directory in another terminal:
+Ranks candidate datasets using downstream fanout, dashboards, ML dependencies, and risk score.
 
-```bash
-python -m http.server 3000 --directory web
-```
+### Prove context-derived authority
 
-Open `http://localhost:3000`.
+`GET /v1/experiments/authority-drift`
 
-## DataHub modes
-
-### Demo mode
-
-If `DATAHUB_GMS_URL` is absent, iGraph uses deterministic showcase-shaped metadata so the complete guardrail workflow can be demonstrated without credentials.
-
-### Live DataHub OSS
-
-Run DataHub using the official quickstart, then configure:
-
-```bash
-export DATAHUB_GMS_URL=http://localhost:8080
-export DATAHUB_TOKEN=""
-```
-
-For the hackathon dataset:
-
-```bash
-datahub datapack load showcase-ecommerce
-```
-
-The adapter uses DataHub GraphQL search to resolve a dataset and downstream lineage to construct the initial impact graph.
-
-## API
-
-### `POST /v1/analyze`
-
-```bash
-curl -s http://localhost:8000/v1/analyze \
-  -H 'content-type: application/json' \
-  -d '{
-    "action":"rename_column",
-    "entity":"orders",
-    "field":"customer_id",
-    "replacement":"account_id"
-  }'
-```
-
-Response structure:
-
-```text
-pact
-├── request
-├── DataHub context
-├── risk assessment
-├── allowed actions
-├── blocked actions
-└── required validations
-
-receipt
-├── attempted actions
-├── denied actions
-├── generated artifacts
-├── validations
-└── write-back payload
-```
+Returns two Pacts for the same request under different context states and the resulting authority delta.
 
 ## Risk model
 
-Risk is deterministic; the LLM is not trusted to grant itself permission.
+Risk is deterministic; an LLM is never allowed to grant itself permission.
 
-Current signals include:
+Signals currently include:
 
 - downstream fanout;
 - dashboard dependencies;
-- ML feature/model dependencies;
+- ML dependencies;
 - cross-domain impact;
 - breaking schema changes;
-- sensitive-data classifications.
+- sensitive-data classification.
 
-Risk tiers are `low`, `medium`, `high`, and `critical`.
+High/critical context removes staging authority and blocks production execution.
 
-High/critical Pacts block production deployment and require human approval.
+## What iGraph is not claiming
 
-## Impact Pact
+The project does **not** claim novelty for:
 
-An Impact Pact is a temporary machine-readable execution envelope derived from DataHub context. It answers:
+- lineage analysis;
+- blast-radius calculation;
+- AI-generated migrations;
+- metadata-aware agents;
+- generic PR/CI risk blocking.
 
-- what change was requested;
-- what the change affects;
-- why it is risky;
-- what the agent may do;
-- what the agent may not do;
-- what must be validated before review/deployment.
+The product claim is narrower:
 
-## Change Receipt
+> **iGraph converts the current organizational context of a proposed data change into an action-specific, machine-enforced authority object and records the resulting execution evidence.**
 
-A Change Receipt records the consequence chain:
+## Next proof milestones
 
-```text
-Context → Decision → Action → Evidence
-```
-
-The receipt makes allowed and denied behavior inspectable instead of hiding the agent's work behind a chat response.
-
-## Next milestones
-
-1. Bind the golden demo to a real high-fanout entity in `showcase-ecommerce`.
-2. Pull ownership, domains, tags and assertions from live DataHub, not only lineage.
-3. Generate a real migration + regression test from the proposed change.
-4. Re-query DataHub after execution to compare pre-change and post-change impact.
-5. Emit real DataHub write-back metadata (structured property/tag/document) rather than only preparing the write-back payload.
-6. Add a public hosted demo and record the <3 minute submission video.
-7. Add sample `impact-pact.json`, `impact-report.md` and `change-receipt.json` generated from the live scenario.
+1. Run against real `showcase-ecommerce` DataHub metadata.
+2. Select the strongest live asset with `/v1/discover`.
+3. Demonstrate live Pact recompilation after a real context mutation.
+4. Prove stale-Pact rejection against changed live DataHub context.
+5. Emit and inspect one real DataHub write-back.
+6. Execute one allowed action through a real sandbox adapter.
+7. Re-read post-change context and produce the final live Change Receipt.
+8. Capture the full A/B flow in the <3-minute demo.
 
 ## License
 
