@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,13 @@ class ValidationStatus(StrEnum):
     WARNING = "warning"
     PENDING = "pending"
     FAIL = "fail"
+
+
+class ExecutionStatus(StrEnum):
+    DENIED = "denied"
+    EXECUTED = "executed"
+    PREPARED = "prepared"
+    FAILED = "failed"
 
 
 class ChangeRequest(BaseModel):
@@ -88,6 +95,15 @@ class ValidationResult(BaseModel):
     evidence: str
 
 
+class ExecutionEvent(BaseModel):
+    action: str
+    status: ExecutionStatus
+    executor_invoked: bool
+    decision: GuardDecision
+    evidence_sha256: str | None = None
+    detail: str
+
+
 class DataHubWriteback(BaseModel):
     target_urn: str
     mode: Literal["emitted", "skipped", "demo", "failed"]
@@ -100,6 +116,7 @@ class ChangeReceipt(BaseModel):
     pact_id: str
     status: Literal["ready_for_review", "blocked", "failed"]
     attempted_actions: list[GuardDecision]
+    execution_events: list[ExecutionEvent] = Field(default_factory=list)
     generated_artifacts: list[GeneratedArtifact]
     validations: list[ValidationResult]
     writeback: DataHubWriteback
@@ -107,6 +124,20 @@ class ChangeReceipt(BaseModel):
 
 class AnalysisResponse(BaseModel):
     pact: ImpactPact
+    receipt: ChangeReceipt
+
+
+class ExecuteActionRequest(BaseModel):
+    pact: ImpactPact
+    action: str
+    parameters: dict[str, Any] = Field(default_factory=dict)
+    human_approved: bool = False
+
+
+class ExecuteActionResponse(BaseModel):
+    pact_id: str
+    decision: GuardDecision
+    event: ExecutionEvent
     receipt: ChangeReceipt
 
 
@@ -130,3 +161,20 @@ class DiscoveryCandidate(BaseModel):
 class DiscoveryResponse(BaseModel):
     live: bool
     candidates: list[DiscoveryCandidate]
+
+
+class AuthorityDelta(BaseModel):
+    newly_allowed: list[str] = Field(default_factory=list)
+    newly_blocked: list[str] = Field(default_factory=list)
+    newly_requires_approval: list[str] = Field(default_factory=list)
+
+
+class AuthorityDriftExperiment(BaseModel):
+    request: ChangeRequest
+    before: ImpactPact
+    after: ImpactPact
+    tested_action: str
+    before_decision: GuardDecision
+    after_decision: GuardDecision
+    delta: AuthorityDelta
+    claim: str
