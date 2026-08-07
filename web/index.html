@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>iGraph — Context before action</title>
   <style>
-    :root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#171717;background:#f2f0ea}*{box-sizing:border-box}body{margin:0}.shell{max-width:1180px;margin:0 auto;padding:28px}.top{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #bbb7ae;padding-bottom:18px}.brand{font-weight:800;font-size:28px;letter-spacing:-1px}.tag{font:12px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.12em}.hero{padding:64px 0 34px;max-width:760px}.hero h1{font-size:clamp(42px,7vw,84px);line-height:.92;letter-spacing:-.065em;margin:0 0 24px}.hero p{font-size:18px;line-height:1.5;max-width:680px}.grid{display:grid;grid-template-columns:1fr 1.1fr;gap:16px}.panel{background:#fbfaf6;border:1px solid #c8c4bb;border-radius:18px;padding:22px;box-shadow:0 12px 40px rgba(0,0,0,.05)}label{display:block;font:12px ui-monospace,monospace;text-transform:uppercase;margin:16px 0 7px}input,select{width:100%;padding:13px;border:1px solid #bdb8ae;border-radius:10px;background:#fff;font:14px ui-monospace,monospace}button{margin-top:18px;width:100%;border:0;border-radius:10px;background:#111;color:#fff;padding:14px;font-weight:700;cursor:pointer}.metricbar{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:15px}.metric{border:1px solid #d2cec5;border-radius:12px;padding:12px}.metric b{display:block;font-size:22px}.metric span{font:10px ui-monospace,monospace;text-transform:uppercase}.risk{font-weight:900;text-transform:uppercase}.list{font:13px ui-monospace,monospace;line-height:1.65}.allow{color:#17633b}.deny{color:#a22323}.node{padding:11px 12px;border-left:2px solid #171717;margin:8px 0;background:#f5f3ed}.small{font-size:12px;color:#5d5a54}.receipt{white-space:pre-wrap;max-height:330px;overflow:auto;background:#171717;color:#e9e7df;border-radius:12px;padding:14px;font:11px ui-monospace,monospace}footer{padding:34px 0;font:11px ui-monospace,monospace}@media(max-width:800px){.grid{grid-template-columns:1fr}.shell{padding:18px}}
+    :root{font-family:Inter,ui-sans-serif,system-ui,sans-serif;color:#171717;background:#f2f0ea}*{box-sizing:border-box}body{margin:0}.shell{max-width:1180px;margin:0 auto;padding:28px}.top{display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #bbb7ae;padding-bottom:18px}.brand{font-weight:800;font-size:28px;letter-spacing:-1px}.tag{font:12px ui-monospace,monospace;text-transform:uppercase;letter-spacing:.12em}.hero{padding:64px 0 34px;max-width:800px}.hero h1{font-size:clamp(42px,7vw,84px);line-height:.92;letter-spacing:-.065em;margin:0 0 24px}.hero p{font-size:18px;line-height:1.5;max-width:720px}.grid{display:grid;grid-template-columns:.85fr 1.25fr;gap:16px}.panel{background:#fbfaf6;border:1px solid #c8c4bb;border-radius:18px;padding:22px;box-shadow:0 12px 40px rgba(0,0,0,.05)}label{display:block;font:12px ui-monospace,monospace;text-transform:uppercase;margin:16px 0 7px}input,select{width:100%;padding:13px;border:1px solid #bdb8ae;border-radius:10px;background:#fff;font:14px ui-monospace,monospace}button{margin-top:18px;width:100%;border:0;border-radius:10px;background:#111;color:#fff;padding:14px;font-weight:700;cursor:pointer}.secondary{background:#e9e6de;color:#171717}.metricbar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:15px}.metric{border:1px solid #d2cec5;border-radius:12px;padding:12px}.metric b{display:block;font-size:20px}.metric span{font:10px ui-monospace,monospace;text-transform:uppercase}.risk{font-weight:900;text-transform:uppercase}.list{font:13px ui-monospace,monospace;line-height:1.65}.allow,.pass{color:#17633b}.deny,.fail{color:#a22323}.warning,.pending{color:#906719}.node{padding:11px 12px;border-left:2px solid #171717;margin:8px 0;background:#f5f3ed}.small{font-size:12px;color:#5d5a54}.receipt{white-space:pre-wrap;max-height:340px;overflow:auto;background:#171717;color:#e9e7df;border-radius:12px;padding:14px;font:11px ui-monospace,monospace}.artifact{border:1px solid #d2cec5;border-radius:10px;margin:8px 0;padding:10px}.artifact code{font-size:11px}.pill{display:inline-block;border:1px solid #aaa59b;border-radius:999px;padding:4px 8px;font:10px ui-monospace,monospace;text-transform:uppercase}footer{padding:34px 0;font:11px ui-monospace,monospace}@media(max-width:800px){.grid{grid-template-columns:1fr}.metricbar{grid-template-columns:repeat(2,1fr)}.shell{padding:18px}}
   </style>
 </head>
 <body>
@@ -21,16 +21,21 @@
       <label>Replacement</label><input id="replacement" value="account_id" />
       <label>API URL</label><input id="api" value="http://localhost:8000" />
       <button onclick="runAnalysis()">Analyze blast radius →</button>
-      <p class="small">The default API runs against live DataHub when configured and otherwise returns deterministic showcase-shaped demo context.</p>
+      <button class="secondary" onclick="discover()">Find strongest demo asset</button>
+      <p class="small">Live DataHub is used when configured. Demo fallback is visibly labelled and is never presented as live metadata.</p>
+      <div id="discovery" class="small"></div>
     </section>
     <section class="panel">
       <div class="tag">02 / Impact chamber</div>
-      <div id="empty"><p>Submit a proposed change to generate its impact graph, risk class, Impact Pact and execution receipt.</p></div>
+      <div id="empty"><p>Submit a proposed change to generate its impact graph, risk class, Impact Pact, artifacts, validation evidence and Change Receipt.</p></div>
       <div id="result" hidden>
-        <div class="metricbar"><div class="metric"><b id="riskScore">—</b><span>risk score</span></div><div class="metric"><b id="fanout">—</b><span>downstream</span></div><div class="metric"><b id="riskTier" class="risk">—</b><span>risk tier</span></div></div>
+        <div class="metricbar"><div class="metric"><b id="riskScore">—</b><span>risk score</span></div><div class="metric"><b id="fanout">—</b><span>downstream</span></div><div class="metric"><b id="riskTier" class="risk">—</b><span>risk tier</span></div><div class="metric"><b id="sourceMode">—</b><span>context</span></div></div>
         <div class="tag">Blast radius</div><div id="nodes"></div>
         <div class="tag" style="margin-top:18px">Impact Pact</div><div id="pact" class="list"></div>
-        <div class="tag" style="margin-top:18px">Execution</div><div id="decisions" class="list"></div>
+        <div class="tag" style="margin-top:18px">Execution boundary</div><div id="decisions" class="list"></div>
+        <div class="tag" style="margin-top:18px">Generated artifacts</div><div id="artifacts"></div>
+        <div class="tag" style="margin-top:18px">Validation evidence</div><div id="validations" class="list"></div>
+        <div class="tag" style="margin-top:18px">DataHub write-back</div><div id="writeback" class="list"></div>
         <div class="tag" style="margin-top:18px">Change Receipt</div><div id="receipt" class="receipt"></div>
       </div>
     </section>
@@ -38,22 +43,28 @@
   <footer>iGraph / DataHub Agent Hackathon 2026 / Apache-2.0</footer>
 </div>
 <script>
+const $=id=>document.getElementById(id);
 async function runAnalysis(){
- const base=document.getElementById('api').value.replace(/\/$/,'');
- const payload={action:action.value,entity:entity.value,field:field.value||null,replacement:replacement.value||null};
- try{
-  const r=await fetch(base+'/v1/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-  if(!r.ok) throw new Error(await r.text()); const data=await r.json(); render(data);
- }catch(e){alert('Could not reach iGraph API: '+e.message)}
+ const base=$('api').value.replace(/\/$/,'');
+ const payload={action:$('action').value,entity:$('entity').value,field:$('field').value||null,replacement:$('replacement').value||null};
+ try{const r=await fetch(base+'/v1/analyze',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)throw new Error(await r.text());render(await r.json())}catch(e){alert('Could not reach iGraph API: '+e.message)}
+}
+async function discover(){
+ const base=$('api').value.replace(/\/$/,''); $('discovery').textContent='Scanning DataHub…';
+ try{const r=await fetch(base+'/v1/discover');if(!r.ok)throw new Error(await r.text());const d=await r.json();$('discovery').innerHTML='<p><span class="pill">'+(d.live?'LIVE':'DEMO')+'</span> top candidates</p>'+d.candidates.slice(0,5).map(c=>'<div>'+c.name+' · '+c.downstream_count+' downstream · risk '+c.risk_score+'</div>').join('')}catch(e){$('discovery').textContent=e.message}
 }
 function render(data){
- empty.hidden=true; result.hidden=false; const p=data.pact;
- riskScore.textContent=p.risk.score; fanout.textContent=p.context.downstream.length; riskTier.textContent=p.risk.tier;
- nodes.innerHTML='<div class="node"><b>'+p.context.source_name+'</b><div class="small">source asset</div></div>'+p.context.downstream.map(n=>'<div class="node" style="margin-left:'+(n.depth*18)+'px"><b>'+n.name+'</b><div class="small">'+n.type+' · depth '+n.depth+(n.owner?' · '+n.owner:'')+'</div></div>').join('');
- pact.innerHTML=p.allowed_actions.map(x=>'<div class="allow">✓ '+x+'</div>').join('')+p.blocked_actions.map(x=>'<div class="deny">✕ '+x+'</div>').join('')+'<div>Required: '+p.required_validations.join(', ')+'</div>';
- decisions.innerHTML=data.receipt.attempted_actions.map(d=>'<div class="'+(d.allowed?'allow':'deny')+'">'+(d.allowed?'✓':'⛔')+' '+d.action+' — '+d.reason+'</div>').join('');
- receipt.textContent=JSON.stringify(data.receipt,null,2);
+ $('empty').hidden=true;$('result').hidden=false;const p=data.pact,r=data.receipt;
+ $('riskScore').textContent=p.risk.score;$('fanout').textContent=p.context.downstream.length;$('riskTier').textContent=p.risk.tier;$('sourceMode').textContent=p.context.live?'LIVE':'DEMO';
+ $('nodes').innerHTML='<div class="node"><b>'+p.context.source_name+'</b><div class="small">source asset · '+p.context_hash+'</div></div>'+p.context.downstream.map(n=>'<div class="node" style="margin-left:'+(Math.min(n.depth,5)*18)+'px"><b>'+n.name+'</b><div class="small">'+n.type+' · depth '+n.depth+(n.owner?' · '+n.owner:'')+'</div></div>').join('');
+ $('pact').innerHTML=p.allowed_actions.map(x=>'<div class="allow">✓ '+x+'</div>').join('')+p.blocked_actions.map(x=>'<div class="deny">✕ '+x+'</div>').join('')+'<div>Required: '+p.required_validations.join(', ')+'</div>';
+ $('decisions').innerHTML=r.attempted_actions.map(d=>'<div class="'+(d.allowed?'allow':'deny')+'">'+(d.allowed?'✓':'⛔')+' '+d.action+' — '+d.reason+'</div>').join('');
+ $('artifacts').innerHTML=r.generated_artifacts.map(a=>'<div class="artifact"><b>'+a.path+'</b><div class="small">'+a.kind+' · sha256 '+a.sha256.slice(0,12)+'…</div><code>'+escapeHtml(a.content.slice(0,260))+'</code></div>').join('');
+ $('validations').innerHTML=r.validations.map(v=>'<div class="'+v.status+'">'+v.status.toUpperCase()+' · '+v.name+' — '+v.evidence+'</div>').join('');
+ $('writeback').innerHTML='<div><span class="pill">'+r.writeback.mode+'</span> '+r.writeback.target_urn+'</div>'+(r.writeback.error?'<div class="fail">'+r.writeback.error+'</div>':'');
+ $('receipt').textContent=JSON.stringify(r,null,2);
 }
+function escapeHtml(s){return s.replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
 </script>
 </body>
 </html>
