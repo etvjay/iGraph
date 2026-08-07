@@ -13,6 +13,13 @@ class RiskTier(StrEnum):
     CRITICAL = "critical"
 
 
+class ValidationStatus(StrEnum):
+    PASS = "pass"
+    WARNING = "warning"
+    PENDING = "pending"
+    FAIL = "fail"
+
+
 class ChangeRequest(BaseModel):
     action: Literal["rename_column", "drop_column", "change_type", "modify_asset"]
     entity: str
@@ -34,6 +41,7 @@ class ImpactNode(BaseModel):
 class DataHubContext(BaseModel):
     source_urn: str
     source_name: str
+    schema_fields: list[str] = Field(default_factory=list)
     owners: list[str] = Field(default_factory=list)
     domains: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
@@ -51,6 +59,7 @@ class RiskAssessment(BaseModel):
 
 class ImpactPact(BaseModel):
     pact_id: str
+    context_hash: str
     request: ChangeRequest
     context: DataHubContext
     risk: RiskAssessment
@@ -66,16 +75,58 @@ class GuardDecision(BaseModel):
     reason: str
 
 
+class GeneratedArtifact(BaseModel):
+    path: str
+    kind: str
+    sha256: str
+    content: str
+
+
+class ValidationResult(BaseModel):
+    name: str
+    status: ValidationStatus
+    evidence: str
+
+
+class DataHubWriteback(BaseModel):
+    target_urn: str
+    mode: Literal["emitted", "skipped", "demo", "failed"]
+    properties: dict[str, str] = Field(default_factory=dict)
+    error: str | None = None
+
+
 class ChangeReceipt(BaseModel):
     receipt_id: str
     pact_id: str
     status: Literal["ready_for_review", "blocked", "failed"]
     attempted_actions: list[GuardDecision]
-    generated_artifacts: list[str]
-    validations: dict[str, bool]
-    writeback: dict[str, str]
+    generated_artifacts: list[GeneratedArtifact]
+    validations: list[ValidationResult]
+    writeback: DataHubWriteback
 
 
 class AnalysisResponse(BaseModel):
     pact: ImpactPact
     receipt: ChangeReceipt
+
+
+class VerificationResponse(BaseModel):
+    pact_id: str
+    pre_context_hash: str
+    post_context_hash: str
+    validations: list[ValidationResult]
+    verified: bool
+
+
+class DiscoveryCandidate(BaseModel):
+    urn: str
+    name: str
+    downstream_count: int
+    dashboard_count: int
+    ml_count: int
+    risk_score: int
+
+
+class DiscoveryResponse(BaseModel):
+    live: bool
+    candidates: list[DiscoveryCandidate]
