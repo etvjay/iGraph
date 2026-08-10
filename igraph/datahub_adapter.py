@@ -313,7 +313,7 @@ class DataHubAdapter:
                 query_usage=query_usage,
                 description=getattr(dataset, "description", None),
                 live=True,
-                retrieval_complete=not truncated,
+                retrieval_complete=not truncated and not retrieval_warnings,
                 truncated=truncated,
                 retrieval_warnings=retrieval_warnings,
             )
