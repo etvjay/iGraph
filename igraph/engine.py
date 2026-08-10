@@ -192,7 +192,11 @@ class ImpactEngine:
         hashes = [artifact.sha256 for artifact in artifacts]
         scope = {}
         if "deploy_staging" in pact.allowed_actions:
-            scope["deploy_staging"] = {"targets": ["staging"], "artifact_hashes": hashes}
+            scope["deploy_staging"] = {
+                "targets": ["staging"],
+                "artifact_hashes": hashes,
+                "max_invocations": 1,
+            }
         pact = pact.model_copy(update={"artifact_hashes": hashes, "execution_scope": scope})
         return self.signer.issue(pact)
 
