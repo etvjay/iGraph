@@ -44,6 +44,7 @@ def health() -> dict[str, str | bool]:
     return {
         "status": "ok",
         "service": "igraph",
+        "context_mode": engine.datahub.mode,
         "datahub_configured": engine.datahub.configured,
         "writeback_enabled": engine.datahub.emit_writeback,
     }
