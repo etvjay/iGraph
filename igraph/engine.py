@@ -161,6 +161,8 @@ class ImpactEngine:
             validations.append("ml_dependency_check")
         if context.truncated or not context.retrieval_complete:
             validations.append("context_completeness_check")
+        if request.action in {"drop_column", "change_type"}:
+            validations.append("migration_review")
 
         postconditions = [Postcondition(name="context_is_live", kind="context_live")]
         if request.action == "rename_column" and request.field and request.replacement:
@@ -224,6 +226,14 @@ class ImpactEngine:
                 allowed=False,
                 decision=GuardDecisionType.REQUIRE_APPROVAL,
                 reason="Impact Pact requires explicit human approval for this action",
+                **common,
+            )
+        if action == "deploy_staging" and pact.request.action in {"drop_column", "change_type"}:
+            return GuardDecision(
+                action=action,
+                allowed=False,
+                decision=GuardDecisionType.REQUIRE_MIGRATION,
+                reason="Breaking schema changes require a reviewed migration artifact before staging",
                 **common,
             )
         if action in pact.allowed_actions:
@@ -333,6 +343,14 @@ class ImpactEngine:
                         name=name,
                         status=ValidationStatus.FAIL,
                         evidence="The live context was truncated or explicitly marked incomplete; execution is fail-closed.",
+                    )
+                )
+            elif name == "migration_review":
+                results.append(
+                    ValidationResult(
+                        name=name,
+                        status=ValidationStatus.FAIL,
+                        evidence="No deterministic migration artifact exists for this breaking change.",
                     )
                 )
             else:
