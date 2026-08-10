@@ -4,105 +4,103 @@
 
 **Context-derived execution control for autonomous data changes.**
 
-## One-line definition
+## Primary user and painful moment
 
-> iGraph converts live data context into bounded agent authority.
-
-## Primary user
-
-Data platform and data engineering teams that are beginning to let autonomous agents modify schemas, transformations, pipelines, or related data infrastructure.
-
-## Painful moment
-
-An agent knows how to make a technically valid change, but the organization lacks a machine-enforceable way to translate the current downstream consequences of that change into the exact authority the agent should receive.
+Data platform and data engineering teams are beginning to let autonomous agents
+modify schemas, transformations, pipelines, or related infrastructure. An agent
+may know how to make a technically valid change, while the organization still
+lacks a machine-enforceable way to translate current downstream consequences into
+the exact authority that agent should receive.
 
 ## Canonical primitives
 
 ### Impact Pact
 
-The pre-action authority object. It binds a proposed change to:
+The pre-action authority object. A Pact binds:
 
-- the DataHub context snapshot that justified it;
-- a context fingerprint;
-- deterministic risk;
-- allowed actions;
-- blocked actions;
-- approval requirements;
-- required validation.
+- the DataHub / Agent Context Kit snapshot that justified the decision;
+- a canonical context fingerprint and retrieval-completeness flag;
+- deterministic risk and an explicit decision policy;
+- allow, deny, and human-approval actions;
+- artifact hashes and parameter/target scope;
+- expiry, policy version, HMAC signature, and postconditions.
 
-An Impact Pact is not a natural-language recommendation. It is the execution envelope consumed by the enforcement point.
+The Pact is not a natural-language recommendation. It is consumed by a separate
+enforcement point.
 
 ### Change Receipt
 
-The post-action evidence object. It records:
-
-- Pact ID and context fingerprint;
-- attempted actions;
-- allow/deny decisions;
-- whether an executor was actually invoked;
-- generated artifacts and hashes;
-- validation evidence;
-- resulting write-back state.
+The evidence object. A Receipt records the Pact ID and fingerprint, decisions,
+whether an executor was invoked, artifact hashes, validation evidence, verification
+status, and optional DataHub custom-property/document write-back.
 
 ## Product invariant
 
-> The agent's capabilities do not determine its authority. The consequences of the action do.
+> The agent's capabilities do not determine its authority. The consequences of the
+> action do.
 
-For the same requested change and the same executor, a change in organizational context can legitimately produce a different Impact Pact and therefore different executable authority.
+For the same requested change and the same executor, a context change can produce a
+different Pact and therefore different executable authority.
 
-## Decisive workflow
+## Trust boundary
 
 ```text
-Proposed data change
-→ DataHub context
-→ context fingerprint
-→ consequence analysis
-→ Impact Pact
-→ enforcement point
-   ├─ allowed → executor
-   └─ denied  → executor never invoked
-→ validation
-→ post-change context
-→ Change Receipt
-→ DataHub write-back
+planner / agent
+    │ proposes request and receives Pact
+    ▼
+DataHub + Agent Context Kit ──► signed Impact Pact
+                                  │
+                                  ▼
+                           enforcement point
+                             ├─ allowed + in scope → executor
+                             └─ denied / stale / unavailable → no executor
+                                  │
+                                  ▼
+                             Change Receipt
 ```
 
-## Non-goals
-
-For the hackathon MVP, iGraph is **not**:
-
-- a replacement metadata catalog;
-- a generic lineage viewer;
-- an AI SQL copilot;
-- a generic policy engine;
-- a generic coordination-graph platform;
-- a production database deployment system;
-- a claim that lineage-aware change prevention is novel.
+Live mode never falls back to fixture metadata. Demo mode is selected explicitly
+and every context is marked `live=false`.
 
 ## DataHub relationship
 
-DataHub is the context substrate. iGraph depends on it for organizational state such as schema, lineage, ownership, domains, tags, assertions, and downstream dependencies.
+DataHub is the context substrate: schema, lineage, ownership, domains, tags,
+glossary terms, assertions, query history, documents, and structured properties.
+The Agent Context Kit gives iGraph context-first tools and a documented write-back
+surface. iGraph's product boundary begins when this context is compiled into
+action-specific authority.
 
-iGraph's product boundary begins when that context is compiled into action-specific authority.
+## Non-goals
+
+For the hackathon MVP, iGraph is not:
+
+- a replacement metadata catalog;
+- a generic lineage viewer;
+- an analytics copilot;
+- a generic policy engine;
+- a production database deployment system;
+- a claim that lineage-aware change prevention is novel.
 
 ## Evidence boundary
 
 Implemented in-repo:
 
-- Impact Pact model;
-- context fingerprinting;
-- deterministic risk evaluation;
-- deny-by-default guard;
-- separate enforcement point;
-- executor invocation evidence;
-- generated review artifacts;
-- Change Receipt model;
-- authority-drift experiment fixture.
+- typed context, risk, Pact, enforcement, execution, receipt, and verification models;
+- DataHub SDK + Agent Context Kit enrichment and optional document write-back;
+- explicit demo/live modes with fail-closed live reads;
+- canonical context fingerprints;
+- deterministic consequence scoring;
+- HMAC-signed, expiring Pacts with target/artifact scope;
+- explicit decisions and executor invocation evidence;
+- generated review artifacts with SHA-256 hashes;
+- postcondition-based verification;
+- authority-drift experiment fixture;
+- tests for tampering, expiry, scope, approval, drift, and unavailable context.
 
 Requires live proof before strong public claims:
 
-- real showcase-ecommerce DataHub context;
-- live context drift detection;
-- real DataHub write-back;
-- post-change graph verification;
-- external staging/data executor integration.
+- a real `showcase-ecommerce` DataHub context;
+- a real DataHub mutation followed by stale-Pact rejection;
+- one real custom-property and Agent Context Kit document write-back;
+- one sandbox adapter execution and a post-change schema re-read;
+- the final <3-minute public demo video.
