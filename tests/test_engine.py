@@ -314,6 +314,30 @@ def test_execution_parameters_cannot_escape_signed_scope():
     assert event.executor_invoked is False
 
 
+def test_signed_pact_cannot_be_replayed_after_executor_invocation():
+    invoked = {"count": 0}
+
+    def staging_executor(_parameters):
+        invoked["count"] += 1
+        return {"status": "ok"}
+
+    enforcement = EnforcementPoint({"deploy_staging": staging_executor})
+    engine = ImpactEngine(enforcement=enforcement, datahub=DataHubAdapter())
+    context = DataHubContext(source_urn="urn:li:dataset:test", source_name="orders", schema_fields=["customer_id"])
+    request = ChangeRequest(action="rename_column", entity="orders", field="customer_id", replacement="account_id")
+    pact = engine.make_pact(request, context, engine.assess_risk(request, context))
+    decision = engine.guard(pact, "deploy_staging")
+    parameters = {"target": "staging", "artifact_sha256": pact.artifact_hashes[0]}
+
+    first = enforcement.execute(pact=pact, action="deploy_staging", decision=decision, parameters=parameters)
+    second = enforcement.execute(pact=pact, action="deploy_staging", decision=decision, parameters=parameters)
+
+    assert first.status == ExecutionStatus.EXECUTED
+    assert second.status == ExecutionStatus.DENIED
+    assert second.executor_invoked is False
+    assert invoked["count"] == 1
+
+
 @pytest.mark.asyncio
 async def test_context_unavailable_blocks_execution_and_executor():
     invoked = {"count": 0}
