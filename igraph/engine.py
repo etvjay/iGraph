@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -41,6 +42,14 @@ class ImpactEngine:
     enforcement: EnforcementPoint = field(default_factory=default_enforcement_point)
     signer: PactSigner = field(default_factory=PactSigner)
     pact_ttl_minutes: int = 30
+
+    def __post_init__(self) -> None:
+        if self.datahub.live_requested:
+            secret = os.getenv("IGRAPH_SIGNING_SECRET", "")
+            if len(secret) < 32:
+                raise ValueError(
+                    "Live mode requires IGRAPH_SIGNING_SECRET with at least 32 characters"
+                )
 
     @staticmethod
     def context_hash(context: DataHubContext) -> str:
