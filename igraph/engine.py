@@ -432,7 +432,10 @@ class ImpactEngine:
             )
 
         now = datetime.now(UTC)
-        if now >= pact.expires_at:
+        expires_at = pact.expires_at
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        if now >= expires_at:
             return await self._event_for_decision(
                 pact,
                 action,
