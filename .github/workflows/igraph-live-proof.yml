@@ -1,0 +1,205 @@
+name: iGraph live proof
+
+on:
+  push:
+    branches:
+      - agent/igraph-live-proof
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  datahub-live-proof:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DATAHUB_GMS_URL: http://localhost:8080
+      DATAHUB_TOKEN: ""
+      IGRAPH_CONTEXT_MODE: live
+      IGRAPH_ENABLE_WRITEBACK: "false"
+      PYTHONUNBUFFERED: "1"
+      IGRAPH_URL: http://127.0.0.1:8000
+
+    steps:
+      - name: Check out iGraph
+        uses: actions/checkout@v4
+
+      - name: Reclaim runner disk and enable swap
+        run: |
+          df -h
+          free -h
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL /usr/local/share/powershell
+          sudo apt-get clean
+          if ! swapon --show | grep -q .; then
+            sudo fallocate -l 2G /swapfile || true
+            sudo chmod 600 /swapfile || true
+            sudo mkswap /swapfile || true
+            sudo swapon /swapfile || true
+          fi
+          docker system prune -af || true
+          df -h
+          free -h
+          docker system df || true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install iGraph and test utilities
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python --version
+          python -m datahub version
+          jq --version
+          docker version
+          docker compose version
+
+      - name: Start DataHub quickstart
+        run: |
+          python -m datahub docker quickstart
+
+      - name: Load DataHub showcase graph
+        run: |
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 10 "$DATAHUB_GMS_URL/health" >/tmp/datahub-health.txt 2>/dev/null; then
+              cat /tmp/datahub-health.txt
+              break
+            fi
+            if [ "$attempt" = "60" ]; then
+              echo "DataHub GMS did not become healthy"
+              docker ps -a
+              exit 1
+            fi
+            sleep 5
+          done
+          python -m datahub datapack load showcase-ecommerce
+
+      - name: Configure live signing secret
+        run: |
+          echo "IGRAPH_SIGNING_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+
+      - name: Start iGraph API in live mode
+        run: |
+          mkdir -p /tmp/igraph-live-proof
+          nohup python -m uvicorn igraph.api:app --host 127.0.0.1 --port 8000 >/tmp/igraph.log 2>&1 &
+          echo "$!" >/tmp/igraph.pid
+          for attempt in $(seq 1 60); do
+            if curl -fsS --max-time 10 "$IGRAPH_URL/health" >/tmp/health.json 2>/dev/null; then
+              cat /tmp/health.json
+              break
+            fi
+            if [ "$attempt" = "60" ]; then
+              cat /tmp/igraph.log
+              exit 1
+            fi
+            sleep 2
+          done
+          jq -e '.status == "ok" and .context_mode == "live" and .datahub_configured == true and .writeback_enabled == false' /tmp/health.json
+
+      - name: Prove live discovery, Pact compilation, and verification
+        run: |
+          curl -fsS --max-time 300 "$IGRAPH_URL/v1/discover?query=%2A" | tee /tmp/discover.json
+          jq -e '.live == true and (.candidates | length) > 0' /tmp/discover.json
+          URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
+          test -n "$URN"
+          test "$URN" != "null"
+          echo "Selected live dataset: $URN"
+          jq -n --arg entity "$URN" '{action:"modify_asset", entity:$entity}' >/tmp/analyze-request.json
+          curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/analyze"             -H 'content-type: application/json'             --data-binary @/tmp/analyze-request.json | tee /tmp/analyze.json
+          jq -e '
+            (.pact.context.live == true) and
+            (.pact.context.retrieval_complete == true) and
+            ((.pact.context.downstream | length) > 0) and
+            ((.pact.signature | length) >= 32) and
+            ((.pact.context_hash | length) > 0)
+          ' /tmp/analyze.json
+          jq '.pact' /tmp/analyze.json >/tmp/pact.json
+          curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/verify"             -H 'content-type: application/json'             --data-binary @/tmp/pact.json | tee /tmp/verify.json
+          jq -e '.verified == true and (all(.validations[]; .status == "pass"))' /tmp/verify.json
+
+      - name: Prove signature tampering is blocked before execution
+        run: |
+          jq '.allowed_actions += ["deploy_production"]' /tmp/pact.json >/tmp/tampered-pact.json
+          jq -n --slurpfile pact /tmp/tampered-pact.json             '{pact:$pact[0], action:"create_patch", parameters:{}}' >/tmp/tampered-request.json
+          curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute"             -H 'content-type: application/json'             --data-binary @/tmp/tampered-request.json | tee /tmp/tampered-response.json
+          jq -e '
+            .event.executor_invoked == false and
+            .event.status == "denied" and
+            (.decision.reason | test("signature|tamper|invalid"; "i"))
+          ' /tmp/tampered-response.json
+
+      - name: Prove an expired signed Pact is stale
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import UTC, datetime, timedelta
+          from igraph.models import ImpactPact
+          from igraph.security import PactSigner
+
+          with open("/tmp/pact.json", encoding="utf-8") as handle:
+              pact = ImpactPact.model_validate(json.load(handle))
+          expired = pact.model_copy(update={
+              "expires_at": datetime.now(UTC) - timedelta(minutes=1),
+              "signature": "",
+          })
+          expired = PactSigner().issue(expired)
+          with open("/tmp/expired-pact.json", "w", encoding="utf-8") as handle:
+              json.dump(expired.model_dump(mode="json"), handle)
+          with open("/tmp/expired-request.json", "w", encoding="utf-8") as handle:
+              json.dump({"pact": expired.model_dump(mode="json"), "action": "create_patch", "parameters": {}}, handle)
+          PY
+          curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute"             -H 'content-type: application/json'             --data-binary @/tmp/expired-request.json | tee /tmp/expired-response.json
+          jq -e '.event.executor_invoked == false and .event.status == "pact_stale" and .decision.decision == "pact_stale"' /tmp/expired-response.json
+
+      - name: Prove missing live context returns HTTP 503
+        run: |
+          DATAHUB_GMS_URL=http://127.0.0.1:59999           IGRAPH_CONTEXT_MODE=live           IGRAPH_ENABLE_WRITEBACK=false           IGRAPH_SIGNING_SECRET="$IGRAPH_SIGNING_SECRET"           nohup python -m uvicorn igraph.api:app --host 127.0.0.1 --port 8001 >/tmp/igraph-unavailable.log 2>&1 &
+          echo "$!" >/tmp/igraph-unavailable.pid
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:8001/health >/tmp/unavailable-health.json 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          status="$(curl -sS --max-time 30 -o /tmp/unavailable-response.json -w '%{http_code}'             -X POST http://127.0.0.1:8001/v1/analyze             -H 'content-type: application/json'             --data-binary @/tmp/analyze-request.json)"
+          cat /tmp/unavailable-response.json
+          test "$status" = "503"
+          jq -e '.error == "context_unavailable"' /tmp/unavailable-response.json
+
+      - name: Collect proof artifacts
+        if: always()
+        run: |
+          mkdir -p /tmp/igraph-live-proof
+          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/tampered-response.json /tmp/expired-response.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
+            if [ -f "$file" ]; then
+              cp "$file" /tmp/igraph-live-proof/
+            fi
+          done
+          docker ps -a >/tmp/igraph-live-proof/docker-ps.txt || true
+          compose_file="$(find "$HOME/.datahub" -type f \( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \) -print -quit 2>/dev/null || true)"
+          if [ -n "$compose_file" ]; then
+            docker compose -f "$compose_file" ps >/tmp/igraph-live-proof/datahub-compose-ps.txt || true
+            docker compose -f "$compose_file" logs --no-color >/tmp/igraph-live-proof/datahub-compose.log || true
+          fi
+
+      - name: Upload proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: igraph-live-proof
+          path: /tmp/igraph-live-proof
+          if-no-files-found: ignore
+
+      - name: Stop DataHub and test servers
+        if: always()
+        run: |
+          if [ -f /tmp/igraph-unavailable.pid ]; then kill "$(cat /tmp/igraph-unavailable.pid)" || true; fi
+          if [ -f /tmp/igraph.pid ]; then kill "$(cat /tmp/igraph.pid)" || true; fi
+          compose_file="$(find "$HOME/.datahub" -type f \( -name 'docker-compose*.yml' -o -name 'docker-compose*.yaml' \) -print -quit 2>/dev/null || true)"
+          if [ -n "$compose_file" ]; then
+            docker compose -f "$compose_file" down -v || true
+          fi
