@@ -245,6 +245,15 @@ def test_live_context_failure_is_not_replaced_with_demo(monkeypatch):
         asyncio.run(read())
 
 
+def test_live_engine_requires_non_default_signing_secret(monkeypatch):
+    monkeypatch.setenv("IGRAPH_CONTEXT_MODE", "live")
+    monkeypatch.setenv("DATAHUB_GMS_URL", "http://localhost:8080")
+    monkeypatch.delenv("IGRAPH_SIGNING_SECRET", raising=False)
+
+    with pytest.raises(ValueError, match="IGRAPH_SIGNING_SECRET"):
+        ImpactEngine(DataHubAdapter())
+
+
 @pytest.mark.asyncio
 async def test_tampered_pact_is_denied_before_executor():
     invoked = {"count": 0}
