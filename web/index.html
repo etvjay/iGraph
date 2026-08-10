@@ -22,7 +22,7 @@
       <label>API URL</label><input id="api" value="http://localhost:8000" />
       <button onclick="runAnalysis()">Analyze blast radius →</button>
       <button class="secondary" onclick="discover()">Find strongest demo asset</button>
-      <p class="small">Live DataHub is used when configured. Demo fallback is visibly labelled and is never presented as live metadata.</p>
+      <p class="small">Mode is explicit: demo is deterministic; live DataHub failures fail closed and return context_unavailable.</p>
       <div id="discovery" class="small"></div>
     </section>
     <section class="panel">
@@ -57,8 +57,8 @@ function render(data){
  $('empty').hidden=true;$('result').hidden=false;const p=data.pact,r=data.receipt;
  $('riskScore').textContent=p.risk.score;$('fanout').textContent=p.context.downstream.length;$('riskTier').textContent=p.risk.tier;$('sourceMode').textContent=p.context.live?'LIVE':'DEMO';
  $('nodes').innerHTML='<div class="node"><b>'+p.context.source_name+'</b><div class="small">source asset · '+p.context_hash+'</div></div>'+p.context.downstream.map(n=>'<div class="node" style="margin-left:'+(Math.min(n.depth,5)*18)+'px"><b>'+n.name+'</b><div class="small">'+n.type+' · depth '+n.depth+(n.owner?' · '+n.owner:'')+'</div></div>').join('');
- $('pact').innerHTML=p.allowed_actions.map(x=>'<div class="allow">✓ '+x+'</div>').join('')+p.blocked_actions.map(x=>'<div class="deny">✕ '+x+'</div>').join('')+'<div>Required: '+p.required_validations.join(', ')+'</div>';
- $('decisions').innerHTML=r.attempted_actions.map(d=>'<div class="'+(d.allowed?'allow':'deny')+'">'+(d.allowed?'✓':'⛔')+' '+d.action+' — '+d.reason+'</div>').join('');
+ $('pact').innerHTML='<div><b>'+p.pact_id+'</b> · signature '+p.signature.slice(0,12)+'…</div><div>Expires: '+new Date(p.expires_at).toLocaleString()+'</div>'+p.allowed_actions.map(x=>'<div class="allow">✓ '+x+'</div>').join('')+p.blocked_actions.map(x=>'<div class="deny">✕ '+x+'</div>').join('')+(p.requires_human_approval.length?'<div class="warning">Approval: '+p.requires_human_approval.join(', ')+'</div>':'')+'<div>Required: '+p.required_validations.join(', ')+'</div>';
+ $('decisions').innerHTML=(r.attempted_actions.length?r.attempted_actions:[]).map(d=>'<div class="'+(d.allowed?'allow':'deny')+'">'+(d.allowed?'✓':'⛔')+' '+d.action+' · '+(d.decision||'deny')+' — '+d.reason+'</div>').join('')||'<div class="small">No action attempted; receipt is ready for review.</div>';
  $('artifacts').innerHTML=r.generated_artifacts.map(a=>'<div class="artifact"><b>'+a.path+'</b><div class="small">'+a.kind+' · sha256 '+a.sha256.slice(0,12)+'…</div><code>'+escapeHtml(a.content.slice(0,260))+'</code></div>').join('');
  $('validations').innerHTML=r.validations.map(v=>'<div class="'+v.status+'">'+v.status.toUpperCase()+' · '+v.name+' — '+v.evidence+'</div>').join('');
  $('writeback').innerHTML='<div><span class="pill">'+r.writeback.mode+'</span> '+r.writeback.target_urn+'</div>'+(r.writeback.error?'<div class="fail">'+r.writeback.error+'</div>':'');
