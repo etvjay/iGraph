@@ -62,6 +62,18 @@ def test_unknown_action_defaults_to_denied():
     assert engine.guard(pact, "rotate_credentials").allowed is False
 
 
+def test_breaking_change_requires_migration_before_staging():
+    engine = ImpactEngine(DataHubAdapter())
+    request = ChangeRequest(action="drop_column", entity="orders", field="customer_id")
+    context = DataHubContext(source_urn="urn:li:dataset:test", source_name="orders", schema_fields=["customer_id"])
+    pact = engine.make_pact(request, context, engine.assess_risk(request, context))
+
+    decision = engine.guard(pact, "deploy_staging")
+
+    assert decision.decision == GuardDecisionType.REQUIRE_MIGRATION
+    assert decision.allowed is False
+
+
 def test_rename_generates_real_sql_artifacts():
     engine = ImpactEngine(DataHubAdapter())
     request = ChangeRequest(
