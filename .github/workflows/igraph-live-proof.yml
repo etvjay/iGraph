@@ -189,14 +189,6 @@ jobs:
             docker compose -f "$compose_file" logs --no-color >/tmp/igraph-live-proof/datahub-compose.log || true
           fi
 
-      - name: Upload proof artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: igraph-live-proof
-          path: /tmp/igraph-live-proof
-          if-no-files-found: ignore
-
       - name: Stop DataHub and test servers
         if: always()
         run: |
