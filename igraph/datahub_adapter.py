@@ -202,6 +202,19 @@ class DataHubAdapter:
             ]
             retrieval_warnings: list[str] = []
             truncated = len(lineage_results) >= 500
+            if agent_get_lineage:
+                try:
+                    kit_lineage = agent_get_lineage(
+                        str(dataset_urn),
+                        column=field,
+                        upstream=False,
+                        max_hops=3,
+                        max_results=500,
+                    )
+                    kit_downstream = kit_lineage.get("downstreams") or {}
+                    truncated = truncated or bool(kit_downstream.get("hasMore"))
+                except Exception as exc:  # noqa: BLE001 - provider enrichment is fail-closed via warning
+                    retrieval_warnings.append(f"Agent Context Kit lineage warning: {exc}")
 
             # Batch enrichment is deliberately best-effort per asset, but a
             # failed live read is surfaced as a warning rather than represented
