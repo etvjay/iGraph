@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from igraph.models import (
@@ -26,6 +26,7 @@ class EnforcementPoint:
     """
 
     executors: dict[str, ExecutorFn]
+    consumed_invocations: set[tuple[str, str]] = field(default_factory=set)
 
     @staticmethod
     def _evidence_hash(payload: dict[str, Any]) -> str:
@@ -123,6 +124,25 @@ class EnforcementPoint:
                 detail="Parameters were outside the signed Pact execution scope.",
             )
 
+        scope = pact.execution_scope.get(action) or {}
+        max_invocations = int(scope.get("max_invocations", 1))
+        invocation_key = (pact.pact_id, action)
+        if max_invocations <= 0 or invocation_key in self.consumed_invocations:
+            replay_decision = decision.model_copy(
+                update={
+                    "allowed": False,
+                    "decision": GuardDecisionType.DENY,
+                    "reason": "Impact Pact invocation limit has already been consumed",
+                }
+            )
+            return ExecutionEvent(
+                action=action,
+                status=ExecutionStatus.DENIED,
+                executor_invoked=False,
+                decision=replay_decision,
+                detail="Replay/duplicate execution was blocked before executor invocation.",
+            )
+
         executor = self.executors.get(action)
         if executor is None:
             return ExecutionEvent(
@@ -134,6 +154,7 @@ class EnforcementPoint:
             )
 
         try:
+            self.consumed_invocations.add(invocation_key)
             result = executor(parameters)
             return ExecutionEvent(
                 action=action,
