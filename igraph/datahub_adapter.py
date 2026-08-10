@@ -513,3 +513,36 @@ class DataHubAdapter:
                 document_status=document_status,
                 error=str(exc),
                            )
+
+    async def discover_candidates(self, query: str = "*") -> list[DataHubContext]:
+        if self.mode == "demo":
+            return [self._demo_context("orders")]
+
+        client = self._client()
+        contexts: list[DataHubContext] = []
+
+        if not query or query == "*":
+            if SearchFilter is None:
+                raise ContextUnavailableError(
+                    "Live wildcard discovery requires DataHub SDK FilterDsl"
+                )
+            urns = client.search.get_urns(
+                filter=SearchFilter.entity_type("dataset")
+            )
+        else:
+            urns = client.search.get_urns(query=query)
+
+        for urn in list(urns)[:30]:
+            if urn.entity_type != "dataset":
+                continue
+            contexts.append(await self.get_context(str(urn)))
+
+        return contexts
+
+
+class _NullContext:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
