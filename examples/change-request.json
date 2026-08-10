@@ -1,0 +1,6 @@
+{
+  "action": "rename_column",
+  "entity": "orders",
+  "field": "customer_id",
+  "replacement": "account_id"
+}
