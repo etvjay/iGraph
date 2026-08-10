@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
-from igraph.datahub_adapter import DataHubAdapter
+from igraph.datahub_adapter import ContextUnavailableError, DataHubAdapter
 from igraph.engine import ImpactEngine
 from igraph.models import (
     AnalysisResponse,
@@ -19,7 +20,7 @@ from igraph.models import (
 app = FastAPI(
     title="iGraph",
     description="Context-derived execution control for autonomous data changes using DataHub.",
-    version="0.3.0",
+    version="0.4.0",
 )
 app.add_middleware(
     CORSMiddleware,
@@ -28,6 +29,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(ContextUnavailableError)
+async def context_unavailable(_request: Request, exc: ContextUnavailableError) -> JSONResponse:
+    """Expose live-read failures as an explicit 503, never as demo success."""
+    return JSONResponse(status_code=503, content={"error": "context_unavailable", "detail": str(exc)})
 
 engine = ImpactEngine(DataHubAdapter())
 
