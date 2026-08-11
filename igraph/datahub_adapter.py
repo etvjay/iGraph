@@ -285,6 +285,7 @@ class DataHubAdapter:
 
             assertions: list[str] = []
             assertion_statuses: dict[str, str] = {}
+            agent_assertions_retrieved = False
 
             if agent_get_dataset_assertions:
                 try:
@@ -295,6 +296,9 @@ class DataHubAdapter:
                     entries = (assertion_result.get("data") or {}).get(
                         "assertions",
                         [],
+                    )
+                    agent_assertions_retrieved = (
+                        assertion_result.get("success", True) is not False
                     )
                     for item in entries:
                         assertion_urn = str(item.get("urn"))
@@ -308,7 +312,7 @@ class DataHubAdapter:
                         f"Agent Context Kit assertions warning: {exc}"
                     )
 
-            if not assertions:
+            if not assertions and not agent_assertions_retrieved:
                 try:
                     for assertion in client.assertions.get_assertions_for_entity(
                         dataset_urn
