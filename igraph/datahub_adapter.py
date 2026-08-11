@@ -254,12 +254,9 @@ class DataHubAdapter:
                 self._text(term) or str(term)
                 for term in (getattr(dataset, "glossary_terms", None) or [])
             ]
-            structured_properties = {
-                str(key): str(value)
-                for key, value in (
-                    getattr(dataset, "structured_properties", None) or {}
-                ).items()
-            }
+            structured_properties = self._structured_properties(
+                getattr(dataset, "structured_properties", None)
+            )
 
             schema_fields: list[str] = []
             schema = getattr(dataset, "schema", None)
@@ -383,6 +380,51 @@ class DataHubAdapter:
             if text:
                 return text
         return None
+
+    @classmethod
+    def _structured_properties(cls, value: Any) -> dict[str, str]:
+        """Normalize SDK structured-property assignments for the API model."""
+        if not value:
+            return {}
+        if isinstance(value, dict):
+            return {str(key): str(item) for key, item in value.items()}
+
+        entries = cls._unwrap_list(value, "properties")
+        if not entries:
+            entries = [value]
+
+        result: dict[str, str] = {}
+        for entry in entries:
+            if isinstance(entry, dict):
+                key = (
+                    entry.get("propertyUrn")
+                    or entry.get("property_urn")
+                    or entry.get("name")
+                    or entry.get("urn")
+                )
+                raw_values = entry.get("values")
+                if raw_values is None:
+                    raw_values = entry.get("value")
+            else:
+                key = (
+                    getattr(entry, "propertyUrn", None)
+                    or getattr(entry, "property_urn", None)
+                    or getattr(entry, "name", None)
+                    or getattr(entry, "urn", None)
+                )
+                raw_values = getattr(entry, "values", None)
+                if raw_values is None:
+                    raw_values = getattr(entry, "value", None)
+
+            if key is None:
+                continue
+            if isinstance(raw_values, (list, tuple, set)):
+                rendered = ", ".join(str(item) for item in raw_values)
+            else:
+                rendered = "" if raw_values is None else str(raw_values)
+            result[str(key)] = rendered
+
+        return result
 
     @classmethod
     def _names(cls, value: Any, *keys: str) -> list[str]:
