@@ -81,6 +81,45 @@ jobs:
           done
           python -m datahub datapack load showcase-ecommerce
 
+      - name: Wait for DataHub search index
+        run: |
+          for attempt in $(seq 1 36); do
+            if python - <<'PY'
+          import os
+
+          from datahub.sdk import DataHubClient
+
+          try:
+              from datahub.sdk import FilterDsl as F
+          except ImportError:
+              from datahub.sdk.search_filters import FilterDsl as F
+
+          try:
+              client = DataHubClient(
+                  server=os.environ["DATAHUB_GMS_URL"],
+                  token=os.environ.get("DATAHUB_TOKEN") or None,
+              )
+              urns = list(client.search.get_urns(filter=F.entity_type("dataset")))
+              print(f"DataHub dataset search returned {len(urns)} URNs")
+              for urn in urns[:5]:
+                  print(f"  {urn}")
+              raise SystemExit(0 if urns else 1)
+          except Exception as exc:
+              print(f"DataHub dataset search is not ready: {exc}")
+              raise SystemExit(1)
+          PY
+            then
+              echo "DataHub search index is ready"
+              exit 0
+            fi
+            if [ "$attempt" = "36" ]; then
+              echo "DataHub dataset search did not become ready"
+              exit 1
+            fi
+            sleep 5
+          done
+
+
       - name: Configure live signing secret
         run: |
           echo "IGRAPH_SIGNING_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
@@ -103,16 +142,34 @@ jobs:
           done
           jq -e '.status == "ok" and .context_mode == "live" and .datahub_configured == true and .writeback_enabled == false' /tmp/health.json
 
-      - name: Prove live discovery, Pact compilation, and verification
+      - name: Prove live discovery
         run: |
-          curl -fsS --max-time 300 "$IGRAPH_URL/v1/discover?query=%2A" | tee /tmp/discover.json
+          for attempt in $(seq 1 36); do
+            status="$(curl -sS --max-time 120 -o /tmp/discover.json -w '%{http_code}' "$IGRAPH_URL/v1/discover?query=%2A" || true)"
+            echo "Discovery attempt $attempt returned HTTP $status"
+            if [ "$status" = "200" ] && jq -e '.live == true and ((.candidates | length) > 0)' /tmp/discover.json >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" = "36" ]; then
+              echo "Live discovery did not return any dataset candidates"
+              cat /tmp/discover.json || true
+              exit 1
+            fi
+            sleep 5
+          done
+          cat /tmp/discover.json
           jq -e '.live == true and (.candidates | length) > 0' /tmp/discover.json
           URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
           test -n "$URN"
           test "$URN" != "null"
           echo "Selected live dataset: $URN"
           jq -n --arg entity "$URN" '{action:"modify_asset", entity:$entity}' >/tmp/analyze-request.json
-          curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/analyze"             -H 'content-type: application/json'             --data-binary @/tmp/analyze-request.json | tee /tmp/analyze.json
+
+      - name: Prove Pact compilation and verification
+        run: |
+          curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/analyze" \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/analyze-request.json | tee /tmp/analyze.json
           jq -e '
             (.pact.context.live == true) and
             (.pact.context.retrieval_complete == true) and
@@ -121,7 +178,9 @@ jobs:
             ((.pact.context_hash | length) > 0)
           ' /tmp/analyze.json
           jq '.pact' /tmp/analyze.json >/tmp/pact.json
-          curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/verify"             -H 'content-type: application/json'             --data-binary @/tmp/pact.json | tee /tmp/verify.json
+          curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/verify" \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/pact.json | tee /tmp/verify.json
           jq -e '.verified == true and (all(.validations[]; .status == "pass"))' /tmp/verify.json
 
       - name: Prove signature tampering is blocked before execution
@@ -177,7 +236,7 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/igraph-live-proof
-          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/tampered-response.json /tmp/expired-response.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
+          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze-request.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/tampered-pact.json /tmp/tampered-request.json /tmp/tampered-response.json /tmp/expired-pact.json /tmp/expired-request.json /tmp/expired-response.json /tmp/unavailable-health.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
             if [ -f "$file" ]; then
               cp "$file" /tmp/igraph-live-proof/
             fi
@@ -188,6 +247,15 @@ jobs:
             docker compose -f "$compose_file" ps >/tmp/igraph-live-proof/datahub-compose-ps.txt || true
             docker compose -f "$compose_file" logs --no-color >/tmp/igraph-live-proof/datahub-compose.log || true
           fi
+
+      - name: Upload live proof artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: igraph-live-proof-${{ github.run_id }}
+          path: /tmp/igraph-live-proof
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: Stop DataHub and test servers
         if: always()

@@ -6,9 +6,11 @@ from typing import Any
 try:
     from datahub.metadata.urns import Urn
     from datahub.sdk import DataHubClient
+    from datahub.sdk import FilterDsl as SearchFilter
 except ImportError:  # pragma: no cover - demo/test environments may omit the SDK
     Urn = None
     DataHubClient = Any  # type: ignore[misc,assignment]
+    SearchFilter = None
 
 from igraph.models import DataHubContext, DataHubWriteback, ImpactNode
 
@@ -180,8 +182,6 @@ class DataHubAdapter:
             if dataset is None:
                 raise ContextUnavailableError(f"Dataset {dataset_urn} could not be retrieved")
 
-            # The SDK gives us the graph edges; Agent Context Kit supplies the
-            # context-first enrichment calls that are useful to an agent.
             lineage_results = list(
                 client.lineage.get_lineage(
                     source_urn=dataset_urn,
@@ -200,8 +200,10 @@ class DataHubAdapter:
                 )
                 for result in lineage_results
             ]
+
             retrieval_warnings: list[str] = []
             truncated = len(lineage_results) >= 500
+
             if agent_get_lineage:
                 try:
                     kit_lineage = agent_get_lineage(
@@ -213,12 +215,9 @@ class DataHubAdapter:
                     )
                     kit_downstream = kit_lineage.get("downstreams") or {}
                     truncated = truncated or bool(kit_downstream.get("hasMore"))
-                except Exception as exc:  # noqa: BLE001 - provider enrichment is fail-closed via warning
+                except Exception as exc:  # noqa: BLE001
                     retrieval_warnings.append(f"Agent Context Kit lineage warning: {exc}")
 
-            # Batch enrichment is deliberately best-effort per asset, but a
-            # failed live read is surfaced as a warning rather than represented
-            # as a false empty graph.
             if agent_get_entities and downstream:
                 try:
                     details = agent_get_entities([node.urn for node in downstream])
@@ -236,21 +235,28 @@ class DataHubAdapter:
                         node.column_paths = self._names(
                             detail.get("schemaMetadata"), "fields", "fieldPath"
                         )
-                except Exception as exc:  # noqa: BLE001 - optional enrichment must not hide the base graph
-                    retrieval_warnings.append(f"Agent Context Kit downstream enrichment warning: {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    retrieval_warnings.append(
+                        f"Agent Context Kit downstream enrichment warning: {exc}"
+                    )
 
-            owners = [self._text(owner.owner) or str(owner.owner) for owner in (getattr(dataset, "owners", None) or [])]
+            owners = [
+                self._text(owner.owner) or str(owner.owner)
+                for owner in (getattr(dataset, "owners", None) or [])
+            ]
             domain = getattr(dataset, "domain", None)
             domains = [self._text(domain)] if domain else []
-            tags = [str(tag.tag).split(":")[-1] for tag in (getattr(dataset, "tags", None) or [])]
+            tags = [
+                str(tag.tag).split(":")[-1]
+                for tag in (getattr(dataset, "tags", None) or [])
+            ]
             glossary_terms = [
                 self._text(term) or str(term)
                 for term in (getattr(dataset, "glossary_terms", None) or [])
             ]
-            structured_properties = {
-                str(key): str(value)
-                for key, value in (getattr(dataset, "structured_properties", None) or {}).items()
-            }
+            structured_properties = self._structured_properties(
+                getattr(dataset, "structured_properties", None)
+            )
 
             schema_fields: list[str] = []
             schema = getattr(dataset, "schema", None)
@@ -259,6 +265,7 @@ class DataHubAdapter:
                     schema_fields = [str(column.field_path) for column in schema]
                 except TypeError:
                     schema_fields = []
+
             if agent_list_schema_fields:
                 try:
                     schema_result = agent_list_schema_fields(str(dataset_urn), limit=500)
@@ -268,16 +275,31 @@ class DataHubAdapter:
                         for item in kit_fields
                         if item.get("fieldPath") or item.get("field_path")
                     ] or schema_fields
-                    truncated = truncated or bool(schema_result.get("remainingCount", 0) > 0)
-                except Exception as exc:  # noqa: BLE001 - optional enrichment must not hide the base graph
-                    retrieval_warnings.append(f"Agent Context Kit schema warning: {exc}")
+                    truncated = truncated or bool(
+                        schema_result.get("remainingCount", 0) > 0
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    retrieval_warnings.append(
+                        f"Agent Context Kit schema warning: {exc}"
+                    )
 
             assertions: list[str] = []
             assertion_statuses: dict[str, str] = {}
+            agent_assertions_retrieved = False
+
             if agent_get_dataset_assertions:
                 try:
-                    assertion_result = agent_get_dataset_assertions(str(dataset_urn), count=20)
-                    entries = (assertion_result.get("data") or {}).get("assertions", [])
+                    assertion_result = agent_get_dataset_assertions(
+                        str(dataset_urn),
+                        count=20,
+                    )
+                    entries = (assertion_result.get("data") or {}).get(
+                        "assertions",
+                        [],
+                    )
+                    agent_assertions_retrieved = (
+                        assertion_result.get("success", True) is not False
+                    )
                     for item in entries:
                         assertion_urn = str(item.get("urn"))
                         assertions.append(assertion_urn)
@@ -285,31 +307,52 @@ class DataHubAdapter:
                         assertion_statuses[assertion_urn] = (
                             "failing" if summary.get("failed", 0) else "passing"
                         )
-                except Exception as exc:  # noqa: BLE001 - optional enrichment must not hide the base graph
-                    retrieval_warnings.append(f"Agent Context Kit assertions warning: {exc}")
-            if not assertions:
+                except Exception as exc:  # noqa: BLE001
+                    retrieval_warnings.append(
+                        f"Agent Context Kit assertions warning: {exc}"
+                    )
+
+            if not assertions and not agent_assertions_retrieved:
                 try:
-                    for assertion in client.assertions.get_assertions_for_entity(dataset_urn):
+                    for assertion in client.assertions.get_assertions_for_entity(
+                        dataset_urn
+                    ):
                         assertions.append(str(getattr(assertion, "urn", assertion)))
-                except Exception as exc:  # noqa: BLE001 - optional enrichment must not hide the base graph
-                    retrieval_warnings.append(f"DataHub assertion read warning: {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    retrieval_warnings.append(
+                        f"DataHub assertion read warning: {exc}"
+                    )
 
             query_count: int | None = None
             query_usage: list[str] = []
+
             if agent_get_dataset_queries:
                 try:
                     query_result = agent_get_dataset_queries(
-                        str(dataset_urn), column=field, count=20
+                        str(dataset_urn),
+                        column=field,
+                        count=20,
                     )
                     query_count = int(query_result.get("total", 0))
                     for query in query_result.get("queries", []):
-                        statement = ((query.get("properties") or {}).get("statement") or {}).get("value")
+                        statement = (
+                            (query.get("properties") or {})
+                            .get("statement", {})
+                            .get("value")
+                        )
                         if statement:
                             query_usage.append(str(statement)[:500])
-                except Exception as exc:  # noqa: BLE001 - optional enrichment must not hide the base graph
-                    retrieval_warnings.append(f"Agent Context Kit query-history warning: {exc}")
+                except Exception as exc:  # noqa: BLE001
+                    retrieval_warnings.append(
+                        f"Agent Context Kit query-history warning: {exc}"
+                    )
 
-            source_name = getattr(dataset, "display_name", None) or getattr(dataset_urn, "name", None)
+            source_name = getattr(dataset, "display_name", None) or getattr(
+                dataset_urn,
+                "name",
+                None,
+            )
+
             return DataHubContext(
                 source_urn=str(dataset_urn),
                 source_name=source_name or str(dataset_urn),
@@ -343,6 +386,51 @@ class DataHubAdapter:
         return None
 
     @classmethod
+    def _structured_properties(cls, value: Any) -> dict[str, str]:
+        """Normalize SDK structured-property assignments for the API model."""
+        if not value:
+            return {}
+        if isinstance(value, dict):
+            return {str(key): str(item) for key, item in value.items()}
+
+        entries = cls._unwrap_list(value, "properties")
+        if not entries:
+            entries = [value]
+
+        result: dict[str, str] = {}
+        for entry in entries:
+            if isinstance(entry, dict):
+                key = (
+                    entry.get("propertyUrn")
+                    or entry.get("property_urn")
+                    or entry.get("name")
+                    or entry.get("urn")
+                )
+                raw_values = entry.get("values")
+                if raw_values is None:
+                    raw_values = entry.get("value")
+            else:
+                key = (
+                    getattr(entry, "propertyUrn", None)
+                    or getattr(entry, "property_urn", None)
+                    or getattr(entry, "name", None)
+                    or getattr(entry, "urn", None)
+                )
+                raw_values = getattr(entry, "values", None)
+                if raw_values is None:
+                    raw_values = getattr(entry, "value", None)
+
+            if key is None:
+                continue
+            if isinstance(raw_values, (list, tuple, set)):
+                rendered = ", ".join(str(item) for item in raw_values)
+            else:
+                rendered = "" if raw_values is None else str(raw_values)
+            result[str(key)] = rendered
+
+        return result
+
+    @classmethod
     def _names(cls, value: Any, *keys: str) -> list[str]:
         result: list[str] = []
         for item in cls._unwrap_list(value, *keys):
@@ -352,7 +440,12 @@ class DataHubAdapter:
         return sorted(set(result))
 
     def _demo_context(self, entity: str) -> DataHubContext:
-        source_name = entity.rsplit(",", 2)[-2] if entity.startswith("urn:li:dataset:") else entity
+        source_name = (
+            entity.rsplit(",", 2)[-2]
+            if entity.startswith("urn:li:dataset:")
+            else entity
+        )
+
         return DataHubContext(
             source_urn=(
                 entity
@@ -368,11 +461,19 @@ class DataHubAdapter:
             structured_properties={"lifecycle": "production"},
             downstream=[node.model_copy(deep=True) for node in DEMO_DOWNSTREAM],
             assertions=["schema_compatibility", "freshness_sla"],
-            assertion_statuses={"schema_compatibility": "passing", "freshness_sla": "passing"},
+            assertion_statuses={
+                "schema_compatibility": "passing",
+                "freshness_sla": "passing",
+            },
             query_count=12,
-            query_usage=["SELECT customer_id, amount FROM orders WHERE created_at >= ?"],
+            query_usage=[
+                "SELECT customer_id, amount FROM orders WHERE created_at >= ?"
+            ],
             documents=["urn:li:document:igraph-demo-context"],
-            description="Deterministic context shaped after the DataHub showcase-ecommerce graph.",
+            description=(
+                "Deterministic context shaped after the "
+                "DataHub showcase-ecommerce graph."
+            ),
             live=False,
         )
 
@@ -391,23 +492,39 @@ class DataHubAdapter:
             "igraph.status": status,
             "igraph.context_hash": context_hash,
         }
+
         if self.mode == "demo":
-            return DataHubWriteback(target_urn=urn, mode="demo", properties=properties)
+            return DataHubWriteback(
+                target_urn=urn,
+                mode="demo",
+                properties=properties,
+            )
+
         if not self.emit_writeback:
-            return DataHubWriteback(target_urn=urn, mode="skipped", properties=properties)
+            return DataHubWriteback(
+                target_urn=urn,
+                mode="skipped",
+                properties=properties,
+            )
 
         document_urn: str | None = None
         document_status: str | None = None
+
         try:
             client = self._client()
+
             with self._kit_context(client):
                 entity = client.entities.get(Urn.from_string(urn))
                 if entity is None:
-                    raise ContextUnavailableError(f"Cannot write back: entity {urn} was not found")
+                    raise ContextUnavailableError(
+                        f"Cannot write back: entity {urn} was not found"
+                    )
+
                 current = dict(getattr(entity, "custom_properties", {}) or {})
                 current.update(properties)
                 entity.set_custom_properties(current)
                 client.entities.update(entity)
+
                 if agent_save_document and receipt_markdown:
                     document_result = agent_save_document(
                         document_type="Decision",
@@ -417,9 +534,14 @@ class DataHubAdapter:
                         related_assets=[urn],
                     )
                     document_urn = document_result.get("urn")
-                    document_status = "saved" if document_result.get("success") else "failed"
+                    document_status = (
+                        "saved"
+                        if document_result.get("success")
+                        else "failed"
+                    )
                 else:
                     document_status = "skipped"
+
             return DataHubWriteback(
                 target_urn=urn,
                 mode="emitted",
@@ -427,7 +549,8 @@ class DataHubAdapter:
                 document_urn=document_urn,
                 document_status=document_status,
             )
-        except Exception as exc:  # noqa: BLE001 - writeback reports provider-specific failures
+
+        except Exception as exc:  # noqa: BLE001
             return DataHubWriteback(
                 target_urn=urn,
                 mode="failed",
@@ -435,17 +558,31 @@ class DataHubAdapter:
                 document_urn=document_urn,
                 document_status=document_status,
                 error=str(exc),
-            )
+                           )
 
     async def discover_candidates(self, query: str = "*") -> list[DataHubContext]:
         if self.mode == "demo":
             return [self._demo_context("orders")]
+
         client = self._client()
         contexts: list[DataHubContext] = []
-        for urn in list(client.search.get_urns(query=query))[:30]:
+
+        if not query or query == "*":
+            if SearchFilter is None:
+                raise ContextUnavailableError(
+                    "Live wildcard discovery requires DataHub SDK FilterDsl"
+                )
+            urns = client.search.get_urns(
+                filter=SearchFilter.entity_type("dataset")
+            )
+        else:
+            urns = client.search.get_urns(query=query)
+
+        for urn in list(urns)[:30]:
             if urn.entity_type != "dataset":
                 continue
             contexts.append(await self.get_context(str(urn)))
+
         return contexts
 
 
