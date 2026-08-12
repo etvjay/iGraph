@@ -14,34 +14,38 @@ the Pact, target, artifact hash, expiry, and one-shot invocation limit before an
 executor is reached. A Change Receipt records the decision, executor evidence,
 validation states, and optional DataHub custom-property/Document write-back.
 
-## What to show in the video
+## What the recorded proof demonstrates
 
-1. Run the deterministic authority-drift endpoint: the same rename request is
-   allowed to stage in an isolated context and blocked in a PII/dashboard/ML
-   context.
-2. Analyze `orders.customer_id` and show the signed Pact, SQL migration hash, and
-   `require_approval` decision.
-3. Attempt a tampered Pact or `target=production`; show `executor_invoked=false`.
-4. Approve an in-scope staging artifact once; show the simulator receipt and the
-   second-attempt replay denial.
-5. In live mode, show that a GMS timeout returns `context_unavailable` rather than
-   silently using fixture metadata.
+1. Live DataHub context is available and discovery returns 10 candidates.
+2. The `addresses` context binds 28 downstream assets into a signed Impact Pact
+   with a high consequence score of 55/100.
+3. A tampered Pact is denied before executor invocation.
+4. An expired Pact is rejected as `pact_stale` before executor invocation.
+5. Unavailable live context fails closed as `context_unavailable` / HTTP 503;
+   iGraph does not substitute fixture metadata.
+
+The 10-second video is a silent, deterministic vector reconstruction of the
+control-room visual language, populated from the recorded proof artifact. It is
+labeled as a reconstruction and does not claim a production deployment, real
+database mutation, or DataHub write-back.
 
 ## Built with
 
 - DataHub OSS / DataHub SDK
 - DataHub Agent Context Kit (`datahub-agent-context`)
 - FastAPI, Pydantic, and Python
-- DataHub showcase-ecommerce datapack for the live demo
+- DataHub showcase-ecommerce datapack for the live proof
 
 ## Links to include
 
-- Public source repository: `https://github.com/Jaydearcadian/iGraph`
-- Demo endpoint: `GET /v1/experiments/authority-drift`
+- Public source repository: `https://github.com/etvjay/iGraph`
+- Live proof run: `https://github.com/etvjay/iGraph/actions/runs/31479477960`
+- Live proof artifact: `https://github.com/etvjay/iGraph/actions/runs/31479477960/artifacts/9096775884`
 - Reproducible request: [`examples/change-request.json`](../examples/change-request.json)
+- Video asset: `igraph-demo-candidate.mp4` from the accompanying demo package
 
 ## Honest scope
 
 The built-in executor is a reversible staging simulator. Production deployment,
-real database mutation, public repository visibility, and the final hosted video
-remain submission/deployment steps outside this code-only patch.
+real database mutation, and DataHub write-back remain outside this proof. The
+live proof keeps `IGRAPH_ENABLE_WRITEBACK=false`.
