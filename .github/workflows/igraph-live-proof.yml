@@ -147,18 +147,26 @@ jobs:
           for attempt in $(seq 1 36); do
             status="$(curl -sS --max-time 120 -o /tmp/discover.json -w '%{http_code}' "$IGRAPH_URL/v1/discover?query=%2A" || true)"
             echo "Discovery attempt $attempt returned HTTP $status"
-            if [ "$status" = "200" ] && jq -e '.live == true and ((.candidates | length) > 0)' /tmp/discover.json >/dev/null 2>&1; then
+            if [ "$status" = "200" ] && jq -e '
+              .live == true and
+              ((.candidates | length) > 0) and
+              (any(.candidates[]; (.downstream_count // 0) > 0))
+            ' /tmp/discover.json >/dev/null 2>&1; then
               break
             fi
             if [ "$attempt" = "36" ]; then
-              echo "Live discovery did not return any dataset candidates"
+              echo "Live discovery did not return a dataset with loaded lineage"
               cat /tmp/discover.json || true
               exit 1
             fi
             sleep 5
           done
           cat /tmp/discover.json
-          jq -e '.live == true and (.candidates | length) > 0' /tmp/discover.json
+          jq -e '
+            .live == true and
+            (.candidates | length) > 0 and
+            (any(.candidates[]; (.downstream_count // 0) > 0))
+          ' /tmp/discover.json
           URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
           test -n "$URN"
           test "$URN" != "null"
