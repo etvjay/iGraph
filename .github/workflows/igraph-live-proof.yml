@@ -167,7 +167,16 @@ jobs:
             (.candidates | length) > 0 and
             (any(.candidates[]; (.downstream_count // 0) > 0))
           ' /tmp/discover.json
-          URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
+          URN="$(jq -r '
+            .candidates[]
+            | select(
+                .urn == "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.order_items,PROD)"
+              )
+            | .urn
+          ' /tmp/discover.json | head -n1)"
+          if [ -z "$URN" ] || [ "$URN" = "null" ]; then
+            URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
+          fi
           test -n "$URN"
           test "$URN" != "null"
           echo "Selected live dataset: $URN"
