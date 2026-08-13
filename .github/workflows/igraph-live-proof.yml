@@ -202,15 +202,68 @@ jobs:
 
       - name: Prove authorized staging execution and replay protection
         run: |
-          ARTIFACT_SHA="$(jq -r '.execution_scope.deploy_staging.artifact_hashes[0]' /tmp/pact.json)"
-          test -n "$ARTIFACT_SHA"
-          test "$ARTIFACT_SHA" != "null"
-          jq -n --slurpfile pact /tmp/pact.json --arg artifact "$ARTIFACT_SHA" \
-            '{pact:$pact[0], action:"deploy_staging", parameters:{target:"staging", artifact_sha256:$artifact}, human_approved:true}' \
-            >/tmp/execute-request.json
-          curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute" \
-            -H 'content-type: application/json' \
-            --data-binary @/tmp/execute-request.json | tee /tmp/execute-response.json
+          refresh_pact() {
+            curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/analyze" \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/analyze-request.json | tee /tmp/analyze.json
+            jq -e '
+              (.pact.context.live == true) and
+              (.pact.context.retrieval_complete == true) and
+              ((.pact.context.downstream | length) > 0) and
+              ((.pact.signature | length) >= 32) and
+              ((.pact.context_hash | length) > 0)
+            ' /tmp/analyze.json
+            jq '.pact' /tmp/analyze.json >/tmp/pact.json
+            curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/verify" \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/pact.json | tee /tmp/verify.json
+            jq -e '.verified == true and (all(.validations[]; .status == "pass"))' /tmp/verify.json
+          }
+
+          for attempt in $(seq 1 5); do
+            echo "Authorized staging attempt $attempt"
+            ARTIFACT_SHA="$(jq -r '.execution_scope.deploy_staging.artifact_hashes[0]' /tmp/pact.json)"
+            test -n "$ARTIFACT_SHA"
+            test "$ARTIFACT_SHA" != "null"
+            jq -n --slurpfile pact /tmp/pact.json --arg artifact "$ARTIFACT_SHA" \
+              '{pact:$pact[0], action:"deploy_staging", parameters:{target:"staging", artifact_sha256:$artifact}, human_approved:true}' \
+              >/tmp/execute-request.json
+
+            status="$(curl -sS --max-time 120 -o /tmp/execute-response.json -w '%{http_code}' \
+              -X POST "$IGRAPH_URL/v1/actions/execute" \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/execute-request.json || true)"
+            echo "Authorized staging attempt $attempt returned HTTP $status"
+            cat /tmp/execute-response.json
+
+            if [ "$status" = "200" ] && jq -e '
+              .event.status == "executed" and
+              .event.executor_invoked == true and
+              .receipt.status == "executed" and
+              (.event.evidence_sha256 | type == "string") and
+              (.event.evidence_sha256 | length == 64)
+            ' /tmp/execute-response.json >/dev/null 2>&1; then
+              break
+            fi
+
+            if [ "$attempt" = "5" ]; then
+              echo "Authorized staging execution did not stabilize after five attempts"
+              exit 1
+            fi
+
+            if jq -e '
+              .event.status == "pact_stale" and
+              (.event.detail | test("Denied before executor invocation"; "i"))
+            ' /tmp/execute-response.json >/dev/null 2>&1; then
+              echo "Live context drifted before execution; refreshing the Pact"
+              refresh_pact
+              continue
+            fi
+
+            echo "Authorized staging execution failed for a non-drift reason"
+            exit 1
+          done
+
           jq -e '
             .event.status == "executed" and
             .event.executor_invoked == true and
@@ -218,6 +271,7 @@ jobs:
             (.event.evidence_sha256 | type == "string") and
             (.event.evidence_sha256 | length == 64)
           ' /tmp/execute-response.json
+
           curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute" \
             -H 'content-type: application/json' \
             --data-binary @/tmp/execute-request.json | tee /tmp/replay-response.json
