@@ -191,6 +191,34 @@ jobs:
             --data-binary @/tmp/pact.json | tee /tmp/verify.json
           jq -e '.verified == true and (all(.validations[]; .status == "pass"))' /tmp/verify.json
 
+      - name: Prove authorized staging execution and replay protection
+        run: |
+          ARTIFACT_SHA="$(jq -r '.execution_scope.deploy_staging.artifact_hashes[0]' /tmp/pact.json)"
+          test -n "$ARTIFACT_SHA"
+          test "$ARTIFACT_SHA" != "null"
+          jq -n --slurpfile pact /tmp/pact.json --arg artifact "$ARTIFACT_SHA" \
+            '{pact:$pact[0], action:"deploy_staging", parameters:{target:"staging", artifact_sha256:$artifact}, human_approved:true}' \
+            >/tmp/execute-request.json
+          curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute" \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/execute-request.json | tee /tmp/execute-response.json
+          jq -e '
+            .event.status == "executed" and
+            .event.executor_invoked == true and
+            .receipt.status == "executed" and
+            (.event.evidence_sha256 | type == "string") and
+            (.event.evidence_sha256 | length == 64)
+          ' /tmp/execute-response.json
+          curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute" \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/execute-request.json | tee /tmp/replay-response.json
+          jq -e '
+            .event.status == "denied" and
+            .event.executor_invoked == false and
+            .receipt.status == "blocked" and
+            (.event.detail | test("Replay|duplicate|invocation limit"; "i"))
+          ' /tmp/replay-response.json
+
       - name: Prove signature tampering is blocked before execution
         run: |
           jq '.allowed_actions += ["deploy_production"]' /tmp/pact.json >/tmp/tampered-pact.json
@@ -244,7 +272,7 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/igraph-live-proof
-          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze-request.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/tampered-pact.json /tmp/tampered-request.json /tmp/tampered-response.json /tmp/expired-pact.json /tmp/expired-request.json /tmp/expired-response.json /tmp/unavailable-health.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
+          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze-request.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/execute-request.json /tmp/execute-response.json /tmp/replay-response.json /tmp/tampered-pact.json /tmp/tampered-request.json /tmp/tampered-response.json /tmp/expired-pact.json /tmp/expired-request.json /tmp/expired-response.json /tmp/unavailable-health.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
             if [ -f "$file" ]; then
               cp "$file" /tmp/igraph-live-proof/
             fi
