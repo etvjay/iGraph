@@ -44,8 +44,8 @@ mutation, or DataHub write-back.
 ## Links to include
 
 - Public source repository: `https://github.com/etvjay/iGraph`
-- Live proof run: `https://github.com/etvjay/iGraph/actions/runs/31740530138`
-- Live proof artifact: `https://github.com/etvjay/iGraph/actions/runs/31740530138/artifacts/9197189421`
+- Live proof run: `https://github.com/etvjay/iGraph/actions/runs/31742150914`
+- Live proof artifact: `https://github.com/etvjay/iGraph/actions/runs/31742150914/artifacts/9197797604`
 - Reproducible request: [`examples/change-request.json`](../examples/change-request.json)
 - Video asset: `igraph-demo-candidate.mp4` from the accompanying demo package
 

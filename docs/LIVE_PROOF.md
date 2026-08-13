@@ -7,18 +7,17 @@ This page records the public GitHub Actions proof for the iGraph control plane.
 - Repository: https://github.com/etvjay/iGraph
 - Main branch: https://github.com/etvjay/iGraph/tree/main
 - Proof change: https://github.com/etvjay/iGraph/pull/4
-- Proof commit: `b68546df66e52e31616303bbf2d4b558dbd18942`
-- Ordinary CI for the proof branch: https://github.com/etvjay/iGraph/actions/runs/31740530254
+- Ordinary CI for the proof branch: https://github.com/etvjay/iGraph/actions/runs/31742150917
 
 ## Recorded live results
 
-Live proof run #10 ran against DataHub OSS and produced these results:
+Live proof run #13 ran against DataHub OSS and produced these results:
 
 - `/health`: `context_mode=live`, `datahub_configured=true`, write-back disabled.
 - `/v1/discover`: live discovery selected the `order_items` context. The compiled
   context contained 37 downstream assets, 3 dashboards, and high risk 55/100.
-- `/v1/analyze`: signed Pact `igp_05f665c75cc1` with context fingerprint
-  `8a1838ad1be408fc`, complete live retrieval, and staging scope requiring human approval.
+- `/v1/analyze`: signed Pact `igp_a2743e1961fb` with context fingerprint
+  `acc76d9fbdaecbfe`, complete live retrieval, and staging scope requiring human approval.
 - `/v1/verify`: live post-read verification returned `verified=true` with complete
   retrieval. This was a re-read proof; no real DataHub mutation was attempted.
 - Authorized staging action: with explicit approval, the reversible staging simulator
@@ -29,8 +28,8 @@ Live proof run #10 ran against DataHub OSS and produced these results:
 - Expired Pact: `pact_stale`, `executor_invoked=false`.
 - Missing live context: `context_unavailable` / HTTP 503, with no fixture fallback.
 
-Download the complete proof artifact from run #10:
-https://github.com/etvjay/iGraph/actions/runs/31740530138/artifacts/9197189421
+Download the complete proof artifact from run #13:
+https://github.com/etvjay/iGraph/actions/runs/31742150914/artifacts/9197797604
 
 ## Claim boundary
 
