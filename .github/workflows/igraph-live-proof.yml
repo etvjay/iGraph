@@ -146,7 +146,7 @@ jobs:
         run: |
           for attempt in $(seq 1 36); do
             status="$(curl -sS --max-time 120 -o /tmp/discover.json -w '%{http_code}' "$IGRAPH_URL/v1/discover?query=%2A" || true)"
-            echo "Discovery attempt $attempt returned HTTP $status"
+            echo "Wildcard discovery attempt $attempt returned HTTP $status"
             if [ "$status" = "200" ] && jq -e '
               .live == true and
               ((.candidates | length) > 0) and
@@ -155,7 +155,7 @@ jobs:
               break
             fi
             if [ "$attempt" = "36" ]; then
-              echo "Live discovery did not return a dataset with loaded lineage"
+              echo "Live wildcard discovery did not return a dataset with loaded lineage"
               cat /tmp/discover.json || true
               exit 1
             fi
@@ -167,11 +167,33 @@ jobs:
             (.candidates | length) > 0 and
             (any(.candidates[]; (.downstream_count // 0) > 0))
           ' /tmp/discover.json
-          URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
-          test -n "$URN"
-          test "$URN" != "null"
-          echo "Selected live dataset: $URN"
-          jq -n --arg entity "$URN" '{action:"modify_asset", entity:$entity}' >/tmp/analyze-request.json
+
+          TARGET_URN="urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.order_items,PROD)"
+          for attempt in $(seq 1 36); do
+            status="$(curl -sS --get --max-time 120 \
+              -o /tmp/target-discover.json -w '%{http_code}' \
+              "$IGRAPH_URL/v1/discover" --data-urlencode "query=order_items" || true)"
+            echo "Target discovery attempt $attempt returned HTTP $status"
+            if [ "$status" = "200" ] && jq -e --arg target "$TARGET_URN" '
+              .live == true and
+              any(.candidates[]; .urn == $target and (.downstream_count // 0) > 0)
+            ' /tmp/target-discover.json >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" = "36" ]; then
+              echo "Target order_items dataset did not become discoverable with loaded lineage"
+              cat /tmp/target-discover.json || true
+              exit 1
+            fi
+            sleep 5
+          done
+          cat /tmp/target-discover.json
+          jq -e --arg target "$TARGET_URN" '
+            .live == true and
+            any(.candidates[]; .urn == $target and (.downstream_count // 0) > 0)
+          ' /tmp/target-discover.json
+          echo "Selected deterministic live dataset: $TARGET_URN"
+          jq -n --arg entity "$TARGET_URN" '{action:"modify_asset", entity:$entity}' >/tmp/analyze-request.json
 
       - name: Prove Pact compilation and verification
         run: |
@@ -190,6 +212,88 @@ jobs:
             -H 'content-type: application/json' \
             --data-binary @/tmp/pact.json | tee /tmp/verify.json
           jq -e '.verified == true and (all(.validations[]; .status == "pass"))' /tmp/verify.json
+
+      - name: Prove authorized staging execution and replay protection
+        run: |
+          refresh_pact() {
+            curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/analyze" \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/analyze-request.json | tee /tmp/analyze.json
+            jq -e '
+              (.pact.context.live == true) and
+              (.pact.context.retrieval_complete == true) and
+              ((.pact.context.downstream | length) > 0) and
+              ((.pact.signature | length) >= 32) and
+              ((.pact.context_hash | length) > 0)
+            ' /tmp/analyze.json
+            jq '.pact' /tmp/analyze.json >/tmp/pact.json
+            curl -fsS --max-time 300 -X POST "$IGRAPH_URL/v1/verify" \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/pact.json | tee /tmp/verify.json
+            jq -e '.verified == true and (all(.validations[]; .status == "pass"))' /tmp/verify.json
+          }
+
+          for attempt in $(seq 1 5); do
+            echo "Authorized staging attempt $attempt"
+            ARTIFACT_SHA="$(jq -r '.execution_scope.deploy_staging.artifact_hashes[0]' /tmp/pact.json)"
+            test -n "$ARTIFACT_SHA"
+            test "$ARTIFACT_SHA" != "null"
+            jq -n --slurpfile pact /tmp/pact.json --arg artifact "$ARTIFACT_SHA" \
+              '{pact:$pact[0], action:"deploy_staging", parameters:{target:"staging", artifact_sha256:$artifact}, human_approved:true}' \
+              >/tmp/execute-request.json
+
+            status="$(curl -sS --max-time 120 -o /tmp/execute-response.json -w '%{http_code}' \
+              -X POST "$IGRAPH_URL/v1/actions/execute" \
+              -H 'content-type: application/json' \
+              --data-binary @/tmp/execute-request.json || true)"
+            echo "Authorized staging attempt $attempt returned HTTP $status"
+            cat /tmp/execute-response.json
+
+            if [ "$status" = "200" ] && jq -e '
+              .event.status == "executed" and
+              .event.executor_invoked == true and
+              .receipt.status == "executed" and
+              (.event.evidence_sha256 | type == "string") and
+              (.event.evidence_sha256 | length == 64)
+            ' /tmp/execute-response.json >/dev/null 2>&1; then
+              break
+            fi
+
+            if [ "$attempt" = "5" ]; then
+              echo "Authorized staging execution did not stabilize after five attempts"
+              exit 1
+            fi
+
+            if jq -e '
+              .event.status == "pact_stale" and
+              (.event.detail | test("Denied before executor invocation"; "i"))
+            ' /tmp/execute-response.json >/dev/null 2>&1; then
+              echo "Live context drifted before execution; refreshing the Pact"
+              refresh_pact
+              continue
+            fi
+
+            echo "Authorized staging execution failed for a non-drift reason"
+            exit 1
+          done
+
+          jq -e '
+            .event.status == "executed" and
+            .event.executor_invoked == true and
+            .receipt.status == "executed" and
+            (.event.evidence_sha256 | type == "string") and
+            (.event.evidence_sha256 | length == 64)
+          ' /tmp/execute-response.json
+
+          curl -fsS --max-time 120 -X POST "$IGRAPH_URL/v1/actions/execute" \
+            -H 'content-type: application/json' \
+            --data-binary @/tmp/execute-request.json | tee /tmp/replay-response.json
+          jq -e '
+            .event.status == "denied" and
+            .event.executor_invoked == false and
+            .receipt.status == "blocked" and
+            (.event.detail | test("Replay|duplicate|invocation limit"; "i"))
+          ' /tmp/replay-response.json
 
       - name: Prove signature tampering is blocked before execution
         run: |
@@ -244,7 +348,7 @@ jobs:
         if: always()
         run: |
           mkdir -p /tmp/igraph-live-proof
-          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze-request.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/tampered-pact.json /tmp/tampered-request.json /tmp/tampered-response.json /tmp/expired-pact.json /tmp/expired-request.json /tmp/expired-response.json /tmp/unavailable-health.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
+          for file in /tmp/health.json /tmp/datahub-health.txt /tmp/discover.json /tmp/analyze-request.json /tmp/analyze.json /tmp/verify.json /tmp/pact.json /tmp/execute-request.json /tmp/execute-response.json /tmp/replay-response.json /tmp/tampered-pact.json /tmp/tampered-request.json /tmp/tampered-response.json /tmp/expired-pact.json /tmp/expired-request.json /tmp/expired-response.json /tmp/unavailable-health.json /tmp/unavailable-response.json /tmp/igraph.log /tmp/igraph-unavailable.log; do
             if [ -f "$file" ]; then
               cp "$file" /tmp/igraph-live-proof/
             fi

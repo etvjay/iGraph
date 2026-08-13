@@ -1,32 +1,42 @@
 # iGraph live proof
 
-This page records the public GitHub Actions proof for the merged iGraph code.
+This page records the public GitHub Actions proof for the iGraph control plane.
 
-## Merged code
+## Code and checks
 
 - Repository: https://github.com/etvjay/iGraph
-- Main commit: `0136cef2fa556d79f7565999f77cfc92c0a66d42`
-- Pull request: https://github.com/etvjay/iGraph/pull/2
-- Post-merge CI: https://github.com/etvjay/iGraph/actions/runs/31618368233
+- Main branch: https://github.com/etvjay/iGraph/tree/main
+- Proof change: https://github.com/etvjay/iGraph/pull/4
+- Ordinary CI for the proof branch: https://github.com/etvjay/iGraph/actions/runs/31749044332
 
 ## Recorded live results
 
-The live-proof workflow ran against DataHub OSS and produced these results:
+Live proof run #16 ran against DataHub OSS and produced these results:
 
 - `/health`: `context_mode=live`, `datahub_configured=true`, write-back disabled.
-- `/v1/discover`: 10 live candidates; the top candidate is `addresses` with
-  22 downstream assets and risk score 55.
-- `/v1/analyze`: live `addresses` context with 28 downstream assets, complete
-  retrieval, high risk 55/100, and signed Pact `igp_ce855182f9dc`.
+- `/v1/discover`: live wildcard discovery returned DataHub showcase assets, and the deterministic
+  `order_items` target was found with loaded lineage.
+- `/v1/analyze`: signed Pact `igp_eb762f75370d` with context fingerprint
+  `db707cbee0416b60`, complete live retrieval, and staging scope requiring human approval.
+  The compiled context contained 37 downstream assets, 3 dashboards, and high risk 55/100.
+- `/v1/verify`: live post-read verification returned `verified=true` with complete
+  retrieval. This was a re-read proof; no real DataHub mutation was attempted.
+- Authorized staging action: with explicit approval, the reversible staging simulator
+  returned `executed`, `executor_invoked=true`, and a receipt with evidence hash
+  `14d0b81de9e6850255958da682bab0d0dc4f1534036752634ca07c6be0b21396`.
+- Same-request replay: returned `denied` with `executor_invoked=false` because the
+  Pact invocation limit had already been consumed.
 - Tampered Pact: `deny`, `executor_invoked=false`.
 - Expired Pact: `pact_stale`, `executor_invoked=false`.
 - Missing live context: `context_unavailable` / HTTP 503, with no fixture fallback.
 
-Download the complete workflow artifact from the successful proof run:
-https://github.com/etvjay/iGraph/actions/runs/31479477960/artifacts/9096775884
+Download the complete proof artifact from run #16:
+https://github.com/etvjay/iGraph/actions/runs/31749044334/artifacts/9200418599
 
 ## Claim boundary
 
-This proves live reads, discovery, Pact signing, enforcement denial, expiry
-rejection, and fail-closed behavior. It does not prove production deployment,
-real database mutation, DataHub write-back, or a deployed public video.
+This proves live reads, discovery, Pact signing, live post-read verification,
+authorized reversible staging execution, one-shot replay protection, enforcement
+denial, expiry rejection, and fail-closed behavior. It does not prove a real
+database mutation, DataHub write-back, production deployment, or a deployed public
+video.
