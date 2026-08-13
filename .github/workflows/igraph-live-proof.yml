@@ -146,7 +146,7 @@ jobs:
         run: |
           for attempt in $(seq 1 36); do
             status="$(curl -sS --max-time 120 -o /tmp/discover.json -w '%{http_code}' "$IGRAPH_URL/v1/discover?query=%2A" || true)"
-            echo "Discovery attempt $attempt returned HTTP $status"
+            echo "Wildcard discovery attempt $attempt returned HTTP $status"
             if [ "$status" = "200" ] && jq -e '
               .live == true and
               ((.candidates | length) > 0) and
@@ -155,7 +155,7 @@ jobs:
               break
             fi
             if [ "$attempt" = "36" ]; then
-              echo "Live discovery did not return a dataset with loaded lineage"
+              echo "Live wildcard discovery did not return a dataset with loaded lineage"
               cat /tmp/discover.json || true
               exit 1
             fi
@@ -167,20 +167,33 @@ jobs:
             (.candidates | length) > 0 and
             (any(.candidates[]; (.downstream_count // 0) > 0))
           ' /tmp/discover.json
-          URN="$(jq -r '
-            .candidates[]
-            | select(
-                .urn == "urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.order_items,PROD)"
-              )
-            | .urn
-          ' /tmp/discover.json | head -n1)"
-          if [ -z "$URN" ] || [ "$URN" = "null" ]; then
-            URN="$(jq -r '.candidates | max_by(.downstream_count) | .urn' /tmp/discover.json)"
-          fi
-          test -n "$URN"
-          test "$URN" != "null"
-          echo "Selected live dataset: $URN"
-          jq -n --arg entity "$URN" '{action:"modify_asset", entity:$entity}' >/tmp/analyze-request.json
+
+          TARGET_URN="urn:li:dataset:(urn:li:dataPlatform:snowflake,b2fd91.order_entry_db.order_entry.order_items,PROD)"
+          for attempt in $(seq 1 36); do
+            status="$(curl -sS --get --max-time 120 \
+              -o /tmp/target-discover.json -w '%{http_code}' \
+              "$IGRAPH_URL/v1/discover" --data-urlencode "query=order_items" || true)"
+            echo "Target discovery attempt $attempt returned HTTP $status"
+            if [ "$status" = "200" ] && jq -e --arg target "$TARGET_URN" '
+              .live == true and
+              any(.candidates[]; .urn == $target and (.downstream_count // 0) > 0)
+            ' /tmp/target-discover.json >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" = "36" ]; then
+              echo "Target order_items dataset did not become discoverable with loaded lineage"
+              cat /tmp/target-discover.json || true
+              exit 1
+            fi
+            sleep 5
+          done
+          cat /tmp/target-discover.json
+          jq -e --arg target "$TARGET_URN" '
+            .live == true and
+            any(.candidates[]; .urn == $target and (.downstream_count // 0) > 0)
+          ' /tmp/target-discover.json
+          echo "Selected deterministic live dataset: $TARGET_URN"
+          jq -n --arg entity "$TARGET_URN" '{action:"modify_asset", entity:$entity}' >/tmp/analyze-request.json
 
       - name: Prove Pact compilation and verification
         run: |
